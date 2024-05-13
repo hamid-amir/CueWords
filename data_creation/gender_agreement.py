@@ -9,43 +9,44 @@ from typing import List, Tuple, Dict
 
 
 ################# define some useful constants ################
-MALE_PRONOUNS = ['he', 'his', 'him']
-FEMALE_PRONOUNS = ['she', 'her', 'hers']
-PLURAL_PRONOUNS = ['they', 'them', 'theirs']
+MALE_PRONOUNS = ['he', 'his', 'him', 'himself']
+FEMALE_PRONOUNS = ['she', 'her', 'hers', 'herself']
+PLURAL_PRONOUNS = ['they', 'them', 'theirs', 'themselves']
 
 # these should be PROPN in order to be detected as a cue
-MALE_HONORIFCS = ['master', 'mr', 'sir', 'sire', 'gentleman', 'lord', 'esq', 'fr']
+MALE_HONORIFCS = ['master', 'mister', 'mr', 'sir', 'sire', 'gentleman', 'lord', 'esq', 'esquire', 'fr']
 FEMALE_HONORIFCS = ['miss', 'ms', 'miss', 'mrs', 'mistress', 'madam', 'maam', 'dame']
 
 # these should be NOUN in order to be detected as a cue
-MALE_NONPOS_NAMES = ['man' , 'husband', 'actor', 'prince', 'waiter', 'king', 'grandfather']
-FEMALE_NONPOS_NAMES = ['woman', 'wife', 'actress', 'princess', 'waitress', 'qeen', 'grandmother']
+MALE_NONPOS_NAMES = ['man' , 'husband', 'actor', 'prince', 'waiter', 'king', 'businessman', 'sportsman', 'nobleman', 'chairman', 'assemblyman', 'committeeman', 'congressman', 'spokesman', 'batsman', 'alderman', 'anchorman', 'churchman', 'councilman', 'frontman', 'horseman']
+FEMALE_NONPOS_NAMES = ['woman', 'wife', 'actress', 'princess', 'waitress', 'queen', 'businesswoman', 'sportswoman', 'noblewoman', 'chairwoman', 'assemblywoman', 'committeewoman', 'congresswoman', 'spokeswoman', 'batswoman', 'alderwoman', 'anchorwoman', 'churchwoman', 'councilwoman', 'frontwoman', 'horsewoman']
 
-# these should become after 'the' in order to be detected as a cue
-MALE_POS_NAMES = ['father', 'boy', 'uncle', 'son']
-FEMALE_POS_NAMES = ['mother', 'girl', 'aunt', 'daughter']
+# these should become before 'of' in order to be detected as a cue
+MALE_POS_NAMES = ['father', 'dad', 'brother', 'nephew', 'boy', 'uncle', 'son', 'grandfather', 'grandson']
+FEMALE_POS_NAMES = ['mother', 'mom', 'sister', 'niece', 'girl', 'aunt', 'daughter', 'grandmother', 'granddaughter']
 
+MIN_PRONOUN = 2
 MAX_PRONOUN = 6
-MALE_DATSET_SIZE = 5000
-FEMALE_DATSET_SIZE = 5000
+MALE_DATSET_SIZE = 1000
+FEMALE_DATSET_SIZE = 1000
 ###############################################################
 
 
 
-# download wiki_bio dataset from Huggingface Datsets
-wiki_bio_dataset = load_dataset('wiki_bio')
+# download test split of wiki_bio dataset from Huggingface Datsets
+wiki_bio_dataset = load_dataset('wiki_bio', split='test')
 
-
+# initialize SpaCy for English
 nlp = spacy.load("en_core_web_sm")
 
 
-# we will just use texts that has between 1 to MAX_PRONOUN pronouns
+# we will just use texts that has between MIN_PRONOUN to MAX_PRONOUN pronouns
 def find_num_pronouns(examples: List[str], prounouns: List[str]) -> List[Tuple[str, int]]:
     output_aug = []
     for text in examples:
         words = text.split()
         num_pronouns = np.array([word in prounouns for word in words]).sum()
-        if 1 <= num_pronouns <= MAX_PRONOUN:
+        if MIN_PRONOUN <= num_pronouns <= MAX_PRONOUN:
             output_aug.append((text, num_pronouns))
     return output_aug
 
@@ -126,7 +127,7 @@ def create_dataset(examples_aug: List[Tuple[str, int]], prounouns: List[str], ho
 
 # extract texts of the wiki_bio dataset from it's TEST split
 texts = []
-for data in  wiki_bio_dataset['test']:
+for data in  wiki_bio_dataset:
   texts.append(data['target_text'])
 
 
