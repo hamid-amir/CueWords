@@ -5,7 +5,7 @@ from tqdm import tqdm
 import random
 import json
 import os
-from typing import List, Tuple, Dict
+from typing import Dict
 
 
 ################# define some useful constants ################
@@ -27,8 +27,6 @@ FEMALE_POS_NAMES = ['mother', 'mom', 'sister', 'niece', 'girl', 'aunt', 'daughte
 
 MIN_PRONOUN = 2
 MAX_PRONOUN = 6
-MALE_DATSET_SIZE = 1000
-FEMALE_DATSET_SIZE = 1000
 ###############################################################
 
 
@@ -40,141 +38,192 @@ wiki_bio_dataset = load_dataset('wiki_bio', split='test')
 nlp = spacy.load("en_core_web_sm")
 
 
-# we will just use texts that has between MIN_PRONOUN to MAX_PRONOUN pronouns
-def find_num_pronouns(examples: List[str], prounouns: List[str]) -> List[Tuple[str, int]]:
-    output_aug = []
-    for text in examples:
-        words = text.split()
-        num_pronouns = np.array([word in prounouns for word in words]).sum()
-        if MIN_PRONOUN <= num_pronouns <= MAX_PRONOUN:
-            output_aug.append((text, num_pronouns))
-    return output_aug
+# we will just keep the examples that has exactly two parts names + text starts with this name
+def name_filter(example:Dict) -> Dict:
+  if "also known" in example['target_text']:
+    return False
+
+  name = None
+  if 'name' in example['input_text']['table']['column_header']:
+    idx = example['input_text']['table']['column_header'].index('name')
+    name = example['input_text']['table']['content'][idx]
+    if '\n' in name: name = name[:-1]
+    if ('-' in name or len(name.split()) != 2) or name not in example['target_text']:
+      return False
+
+  full_name = None
+  if 'full_name' in example['input_text']['table']['column_header']:
+    idx = example['input_text']['table']['column_header'].index('full_name')
+    full_name = example['input_text']['table']['content'][idx]
+    if '\n' in full_name: full_name = full_name[:-1]
+    if ('-' in full_name or len(full_name.split()) != 2) or full_name not in example['target_text']:
+      return False      
+
+  article_title = None
+  if 'article_title' in example['input_text']['table']['column_header']:
+    idx = example['input_text']['table']['column_header'].index('article_title')
+    article_title = example['input_text']['table']['content'][idx]
+    if '\n' in article_title: article_title = article_title[:-1]
+    if ('-' in article_title or len(article_title.split()) != 2) or article_title not in example['target_text']:
+      return False     
+
+  birth_name = None
+  if 'birth_name' in example['input_text']['table']['column_header']:
+    idx = example['input_text']['table']['column_header'].index('birth_name')
+    birth_name = example['input_text']['table']['content'][idx]
+    if '\n' in birth_name: birth_name = birth_name[:-1]
+    if ('-' in birth_name or len(birth_name.split()) != 2) or birth_name not in example['target_text']:
+      return False     
+
+  for i in [name, full_name, article_title, birth_name]:
+    for j in [name, full_name, article_title, birth_name]:
+      if i and j:
+        if i != j: 
+          return False
+
+  name = name or full_name or article_title or birth_name
+  if name == None or ' '.join(example['target_text'].split()[:2]) != name:
+    return False
+
+  return True
+
+
+
+
+# specify gender of the examples
+def specify_gender(example:Dict) -> Dict:
+#   doc = nlp(example['target_text'])
+#   tokens = [token.text for token in doc]
+  tokens = example['target_text'].split()
+    
+  if any(elem in tokens for elem in MALE_PRONOUNS) and any(elem in tokens for elem in FEMALE_PRONOUNS):
+    example['gender'] = 'both'
+  elif any(elem in tokens for elem in PLURAL_PRONOUNS):
+    example['gender'] = 'plural'
+  elif any(elem in tokens for elem in MALE_PRONOUNS):
+    example['gender'] = 'male'
+  elif any(elem in tokens for elem in FEMALE_PRONOUNS):
+    example['gender'] = 'female'
+  else:
+    example['gender'] = None
+
+  return example
+
+
+
+
+# we will just use texts that are either male or female + has between MIN_PRONOUN to MAX_PRONOUN pronouns
+def num_pronouns_filter(example:Dict) -> Dict:
+  if example['gender'] == 'male':
+    # doc = nlp(example['target_text'])
+    # tokens = [token.text for token in doc]
+    tokens = example['target_text'].split()
+    num_pronouns = np.array([token in MALE_PRONOUNS for token in tokens]).sum()
+    if MIN_PRONOUN <= num_pronouns <= MAX_PRONOUN:
+      return True
+
+  if example['gender'] == 'female':
+    # doc = nlp(example['target_text'])
+    # tokens = [token.text for token in doc]
+    tokens = example['target_text'].split()
+    num_pronouns = np.array([token in FEMALE_PRONOUNS for token in tokens]).sum()
+    if MIN_PRONOUN <= num_pronouns <= MAX_PRONOUN:
+      return True
+
+  return False
+
+
 
 
 # CREATE DATASET PRCEDURE
-def create_dataset(examples_aug: List[Tuple[str, int]], prounouns: List[str], honorifics: List[str],
-                   non_pos_names: List[str], pos_names: List[str]) -> List[Dict]:
-    dataset = []
-    for text, num_pronouns in tqdm(examples_aug):
-        # init an entry for this datapoint to be place in dataset dict
-        entry = {}
-        # init a  dict to add found cues to it
-        complete_cues = {}
-        # process the text using SpaCy
-        doc = nlp(text)
-
-        # obtain first_name using a simple heurestic
-        tokens = [token.text for token in doc]
-        if tokens[0] not in honorifics:
-            first_name = tokens[0]
-        else:
-            first_name = tokens[1]
-
-        # iterate over all tokens of the text and check for possible cues
-        for token in doc:
-            # first get the span of this token in the text
-            start, end = token.idx, token.idx + len(token)
-
-            # check whether it is a first_name
-            if token.text == first_name:
-                complete_cues[token.text] = (start, end)
-
-            # check whether is it a honorific name
-            elif token.text in honorifics and token.pos_ == 'PROPN':
-                complete_cues[token.text] = (start, end)
-
-            # check whether is it a non_possessional name
-            elif token.text in non_pos_names and token.pos_ == 'NOUN':
-                complete_cues[token.text] = (start, end)
-
-            # check whether is it a possessional name
-            elif token.text in pos_names and text[start-4:start-1] == 'the':
-                complete_cues[token.text] = (start, end)
-
-            # check whether is it a pronoun
-            elif token.text in prounouns and token.pos_ == 'PRON':
-                complete_cues[token.text] = (start, end)
-            
-
-        # find the last pronoun  of the text and mask it
-        for key, value in reversed(complete_cues.items()):
-            if key in prounouns:
-                mask_word, mask_indices = key, value
-                break
-
-        masked_text = text[:mask_indices[0]]
-        masked_text += '[MASK]'
-
-        # cue words of the masked_text should be before the masked_word
-        masked_cues = {}
-        for key, value in complete_cues.items():
-            if value[0] < mask_indices[0]:
-                masked_cues[key] = value
-
-        #  complete the entry of this datapoint
-        entry['complete_text'] = text
-        entry['masked_text'] = masked_text
-        entry['target_word'] = mask_word
-        entry['complete_text_cue_words'] = complete_cues
-        entry['masked_text_cue_words'] = masked_cues
-
-        # add this entry to the cueWords_dataset
-        dataset.append(entry)
-
-    return dataset
+def create_dataset(example:Dict) -> Dict:
+  if example['gender'] == 'male':
+    prounouns = MALE_PRONOUNS
+    honorifics = MALE_HONORIFCS
+    non_pos_names = MALE_NONPOS_NAMES
+    pos_names = MALE_POS_NAMES
+  else:
+    prounouns = FEMALE_PRONOUNS
+    honorifics = FEMALE_HONORIFCS
+    non_pos_names = FEMALE_NONPOS_NAMES
+    pos_names = FEMALE_POS_NAMES   
 
 
+  # init a list to add found cues to it
+  all_cues = []
+  # process the text using SpaCy
+  doc = nlp(example['target_text'])
 
-# extract texts of the wiki_bio dataset from it's TEST split
-texts = []
-for data in  wiki_bio_dataset:
-  texts.append(data['target_text'])
+  # obtain first_name using a simple heurestic
+  tokens = [token.text for token in doc]
+
+  first_name = tokens[0]
+  last_name = tokens[1]
+
+  # iterate over all tokens of the text and check for possible cues
+  for token in doc:
+    # first get the span of this token in the text
+    start, end = token.idx, token.idx + len(token)
+
+    # check whether it is a first_name
+    if token.text == first_name:
+      all_cues.append(f'{token.text}|{start}|{end}')  
+
+    # check whether it is a last_name
+    elif token.text == last_name:
+      all_cues.append(f'{token.text}|{start}|{end}')  
+
+    # check whether is it a honorific name
+    elif token.text in honorifics and token.pos_ == 'PROPN':
+      all_cues.append(f'{token.text}|{start}|{end}')  
+
+    # check whether is it a non_possessional name
+    elif token.text in non_pos_names and token.pos_ == 'NOUN':
+      all_cues.append(f'{token.text}|{start}|{end}') 
+
+    # check whether is it a possessional name
+    elif token.text in pos_names and example['target_text'][end+2:end+4] == 'of':
+      all_cues.append(f'{token.text}|{start}|{end}') 
+
+    # check whether is it a pronoun
+    elif token.text in prounouns and token.pos_ == 'PRON':
+      all_cues.append(f'{token.text}|{start}|{end}') 
+      
+
+  # find the last pronoun of the text and mask it
+  for cue in reversed(all_cues):
+    token, start, end = cue.split('|')
+    if token in prounouns:
+      mask_word, mask_start_idx = token, int(start)
+      break
+
+  masked_text = example['target_text'][:mask_start_idx]
+  masked_text += '[MASK]'
+
+  # cue words of the masked_text should be before the masked_word
+  masked_text_cues = []
+  for cue in all_cues:
+    token, start, end = cue.split('|')
+    if int(start) < mask_start_idx:
+      masked_text_cues.append(cue)
+
+  example['masked_text'] = masked_text
+  example['target_word'] = mask_word
+  example['cue_words'] = masked_text_cues
+
+  return example
 
 
-# devide the texts based on which kind of genders are present in that.
-# we will just use single gender involved texts
-double_genders = []
-plural_genders = []
-male_genders = []
-female_genders = []
-
-for text in texts:
-    if any(elem in text.lower().split() for elem in MALE_PRONOUNS) and any(elem in text.lower().split() for elem in FEMALE_PRONOUNS):
-        double_genders.append(text)
-    elif any(elem in text.lower().split() for elem in PLURAL_PRONOUNS):
-        plural_genders.append(text)
-    elif any(elem in text.lower().split() for elem in MALE_PRONOUNS):
-        male_genders.append(text)
-    elif any(elem in text.lower().split() for elem in FEMALE_PRONOUNS):
-        female_genders.append(text)
 
 
-male_genders_aug = find_num_pronouns(male_genders, MALE_PRONOUNS)
-female_genders_aug = find_num_pronouns(female_genders, FEMALE_PRONOUNS)
+wiki_bio_dataset_filtered = wiki_bio_dataset.filter(name_filter)
+updated_dataset = wiki_bio_dataset_filtered.map(specify_gender)
+updated_dataset_filtered = updated_dataset.filter(num_pronouns_filter)
+gender_agreement_dataset = updated_dataset_filtered.map(create_dataset)
 
 
-random.shuffle(male_genders_aug)
-if len(male_genders_aug) > MALE_DATSET_SIZE:
-    male_genders_aug = male_genders_aug[:MALE_DATSET_SIZE]
-else:
-    raise Warning()
-
-random.shuffle(female_genders_aug)
-if len(female_genders_aug) > FEMALE_DATSET_SIZE:
-    female_genders_aug = female_genders_aug[:FEMALE_DATSET_SIZE]
-else:
-    raise Warning()
-
-
-male_dataset = create_dataset(male_genders_aug, MALE_PRONOUNS, MALE_HONORIFCS, MALE_NONPOS_NAMES, MALE_POS_NAMES)
-female_dataset = create_dataset(female_genders_aug, FEMALE_PRONOUNS, FEMALE_HONORIFCS, FEMALE_NONPOS_NAMES, FEMALE_POS_NAMES)
-
-dataset = male_dataset + female_dataset
-
-# save it as a json file
-json_data = json.dumps(dataset, indent=4)
+# save it as a csv file
 data_dir = 'data/'
 if not os.path.exists(data_dir):
-    os.makedirs(data_dir)
-with open(data_dir + 'gender_agreement.json', "w") as f:
-    f.write(json_data)
+  os.makedirs(data_dir)
+gender_agreement_dataset.to_csv(data_dir + 'gender_agreement.csv') 
