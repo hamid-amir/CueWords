@@ -1,9 +1,6 @@
 import numpy as np
 import spacy
 from datasets import load_dataset
-from tqdm import tqdm
-import random
-import json
 import os
 from typing import Dict
 
@@ -222,8 +219,8 @@ updated_dataset_filtered = updated_dataset.filter(num_pronouns_filter)
 gender_agreement_dataset = updated_dataset_filtered.map(create_dataset)
 
 
-# save it as a csv file
-data_dir = 'data/'
-if not os.path.exists(data_dir):
-  os.makedirs(data_dir)
-gender_agreement_dataset.to_csv(data_dir + 'gender_agreement.csv') 
+# save the resulting dataset as a json file
+DATA_DIR = 'data/'
+if not os.path.exists(DATA_DIR):
+  os.makedirs(DATA_DIR)
+gender_agreement_dataset.to_json(DATA_DIR + 'gender_agreement.json') 
