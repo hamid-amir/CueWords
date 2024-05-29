@@ -82,6 +82,15 @@ class dataset2cuesCM:
         return check_input_length
 
 
+    def _extract_cue_words_cm(cm, batch_lengths, batch_cues_tokenIdxes):
+        cue_words_cm = []
+        for c in range(3):
+            cue_tokens_cm = [cm[j][:, batch_lengths[j]-2, batch_cues_tokenIdxes[j][c][0]: batch_cues_tokenIdxes[j][c][1]] for j in range(len(cm))]
+            cue_word_cm = np.array([np.sum(cue_token_cm, axis=1) for cue_token_cm in cue_tokens_cm])
+            cue_words_cm.append(torch.tensor(cue_word_cm))
+        return cue_words_cm
+
+
     def retrieveCM(self) -> pd.DataFrame:
         """
         Main function that retrievs context mixing scores of cue words based on
@@ -184,7 +193,8 @@ class dataset2cuesCM:
 
         # we are going to retrieve these values
         shuffled_data = {
-            "cueWords_attentionCM_all_layers": [] # tensor[layer, num_cues]
+            "cueWords_attentionCM_all_layers": [], # tensor[layer, num_cues]
+            "cueWords_rollout_CM_all_layers": [],  # tensor[layer, num_cues]
         }
 
         with torch.no_grad():
@@ -197,17 +207,16 @@ class dataset2cuesCM:
                 batch_lengths = batch["length"].numpy()
                 batch_cues_tokenIdxes = batch['cues_tokenIdxes'].numpy()
 
+                #  these cm have shape => (batch_size, layer, max_seqLen_batch, max_seqLen_batch)
                 attention_cm = torch.stack(outputs['context_mixings']['attention']).permute(1, 0, 2, 3, 4).squeeze(0).mean(1).detach().cpu().numpy()
-                # attention_cm => (batch_size, layer, max_seqLen_batch, max_seqLen_batch)
+                rollout_cm = np.array([rollout(attention_cm[j], res=True) for j in range(len(attention_cm))])
 
-                cue_words_cm = []
-                for c in range(self.num_cues):
-                    cue_tokens_cm = [attention_cm[j][:, batch_lengths[j]-2, batch_cues_tokenIdxes[j][c][0]: batch_cues_tokenIdxes[j][c][1]] for j in range(len(attention_cm))]
-                    cue_word_cm = np.array([np.sum(cue_token_cm, axis=1) for cue_token_cm in cue_tokens_cm])
-                    cue_words_cm.append(torch.tensor(cue_word_cm))
+                cueWords_attention_cm = self._extract_cue_words_cm(attention_cm, batch_lengths, batch_cues_tokenIdxes)
+                cueWords_rollout_cm = self._extract_cue_words_cm(rollout_cm, batch_lengths, batch_cues_tokenIdxes)
 
-                # cue_words_cm => (batch_size, layer, num_cues)
-                shuffled_data['cueWords_attentionCM_all_layers'].extend(torch.stack(cue_words_cm, dim=2))
+                # these cue_words_cm have shape => (batch_size, layer, num_cues)
+                shuffled_data['cueWords_attention_CM_all_layers'].extend(torch.stack(cueWords_attention_cm, dim=2))
+                shuffled_data['cueWords_rollout_CM_all_layers'].extend(torch.stack(cueWords_rollout_cm, dim=2))
 
         # reorder retrieved data
         inverse_idxes = np.argsort(idxes)
