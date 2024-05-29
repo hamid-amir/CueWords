@@ -36,8 +36,9 @@ nlp = spacy.load("en_core_web_sm")
 
 
 # we will just keep the examples that has exactly two parts names + text starts with this name
+# note: there is a funny bug with "ive jerolimov" example, so we will exclude it
 def name_filter(example:Dict) -> Dict:
-  if "also known" in example['target_text']:
+  if "also known" in example['target_text'] or "ive jerolimov" in example['target_text']:
     return False
 
   name = None

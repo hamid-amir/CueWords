@@ -1,3 +1,4 @@
+# put the following dir into the current dir
 # !git clone https://github.com/hmohebbi/context_mixing_toolkit.git -q
 
 
