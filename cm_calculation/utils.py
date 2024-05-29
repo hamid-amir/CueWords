@@ -82,7 +82,7 @@ class dataset2cuesCM:
         return check_input_length
 
 
-    def _extract_cue_words_cm(cm, batch_lengths, batch_cues_tokenIdxes):
+    def _extract_cue_words_cm(self, cm, batch_lengths, batch_cues_tokenIdxes):
         cue_words_cm = []
         for c in range(3):
             cue_tokens_cm = [cm[j][:, batch_lengths[j]-2, batch_cues_tokenIdxes[j][c][0]: batch_cues_tokenIdxes[j][c][1]] for j in range(len(cm))]
@@ -193,7 +193,7 @@ class dataset2cuesCM:
 
         # we are going to retrieve these values
         shuffled_data = {
-            "cueWords_attentionCM_all_layers": [], # tensor[layer, num_cues]
+            "cueWords_attention_CM_all_layers": [], # tensor[layer, num_cues]
             "cueWords_rollout_CM_all_layers": [],  # tensor[layer, num_cues]
         }
 
