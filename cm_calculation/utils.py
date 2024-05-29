@@ -34,7 +34,7 @@ class dataset2cuesCM:
         self.num_cues = num_cues
 
     
-    def get_token_idxes_for_cues(self, tokenizer, sample) -> List[List[Tuple[int, int]]]:
+    def _get_token_idxes_for_cues(self, tokenizer, sample) -> List[List[Tuple[int, int]]]:
         """
         Returns start and end indices of tokens corresponding to each cue word.
         Note that indices are based on input_ids list.
@@ -57,25 +57,36 @@ class dataset2cuesCM:
         return  cues_tokenIdxes
     
 
+    def _suitable_mask(self, examples):
+        if 'roberta' in self.model_checkpoint:
+            examples['masked_text'] = [text.replace('[MASK]', '<mask>') for text in examples['masked_text']]
+        return examples
+
+
+    def _preprocess_function_wrapped(self, tokenizer):
+        def preprocess_function(examples):
+            # Tokenize the texts
+            args = (examples['masked_text'],)
+            result = tokenizer(*args, padding=False)
+            return result
+        return preprocess_function
+
+
+    def _check_input_length_wrapped(self, model):
+        def check_input_length(example):
+            config = model.config
+            max_input_length = config.max_position_embeddings - 2
+            if len(example['input_ids']) > max_input_length:
+                return False
+            return True
+        return check_input_length
+
+
     def retrieveCM(self) -> pd.DataFrame:
         """
         Main function that retrievs context mixing scores of cue words based on
         various interpretability methods.
         """
-        def preprocess_function_wrapped(tokenizer):
-            def preprocess_function(examples):
-                # Tokenize the texts
-                args = (examples['masked_text'],)
-                result = tokenizer(*args, padding=False)
-                return result
-            return preprocess_function
-
-        def suitable_mask(examples):
-            if 'roberta' in self.model_checkpoint:
-                examples['masked_text'] = [text.replace('[MASK]', '<mask>') for text in examples['masked_text']]
-            return examples
-        
-
         DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
         BATCH_SIZE = 16
 
@@ -100,10 +111,13 @@ class dataset2cuesCM:
         sel_dataset = sel_dataset.add_column("idx", [i for i in range(len(sel_dataset))])
 
         # each model has it's own mask token
-        sel_dataset = sel_dataset.map(suitable_mask, batched=True, batch_size=1024)
+        sel_dataset = sel_dataset.map(self._suitable_mask, batched=True, batch_size=1024)
 
         # add tokenization output of each sample to the dataset
-        sel_dataset = sel_dataset.map(preprocess_function_wrapped(tokenizer), batched=True, batch_size=1024)
+        sel_dataset = sel_dataset.map(self._preprocess_function_wrapped(tokenizer), batched=True, batch_size=1024)
+
+        # ensure that each example is shorter than the model max input length
+        sel_dataset = sel_dataset.filter(self._check_input_length_wrapped(model), batched=False)
 
         dataset_size = len(sel_dataset)
         steps = int(np.ceil(dataset_size / BATCH_SIZE))
@@ -130,7 +144,7 @@ class dataset2cuesCM:
 
 
             length = len(sel_dataset[i]['input_ids'])
-            cues_tokenIdxes = self.get_token_idxes_for_cues(tokenizer, sel_dataset[i])
+            cues_tokenIdxes = self._get_token_idxes_for_cues(tokenizer, sel_dataset[i])
 
             lengths.append(length)
             all_cues_tokenIdxes.append(cues_tokenIdxes)
