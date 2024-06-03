@@ -193,30 +193,37 @@ class dataset2cuesCM:
 
         # we are going to retrieve these values
         shuffled_data = {
-            "cueWords_attention_CM_all_layers": [], # tensor[layer, num_cues]
-            "cueWords_rollout_CM_all_layers": [],  # tensor[layer, num_cues]
+            "cueWords_attention_CM_all_layers": [],      # tensor[layer, num_cues]
+            "cueWords_rollout_CM_all_layers": [],        # tensor[layer, num_cues]
+            "cueWords_attentionNorm_CM_all_layers": [],  # tensor[layer, num_cues]
         }
 
         with torch.no_grad():
             for i in tqdm(range(steps), desc="Forwarding and extracting cue words context mixing scores"):
                 batch = next(it)
                 input_batch = {k: batch[k].to(DEVICE) for k in batch.keys() - ['idx', 'length', 'cues_tokenIdxes']}
-                outputs = model(**input_batch, output_attentions=True)
+                cm_config = CMConfig(output_attention=True, output_attention_norm=True)
+                outputs = model(**input_batch, output_context_mixings=cm_config)
+
 
                 idxes.extend(batch['idx'].tolist())
                 batch_lengths = batch["length"].numpy()
                 batch_cues_tokenIdxes = batch['cues_tokenIdxes'].numpy()
 
                 #  these cm have shape => (batch_size, layer, max_seqLen_batch, max_seqLen_batch)
-                attention_cm = torch.stack(outputs['context_mixings']['attention']).permute(1, 0, 2, 3, 4).squeeze(0).mean(1).detach().cpu().numpy()
+                attention_cm = torch.stack(outputs['context_mixings']['attention']).permute(1, 0, 2, 3).detach().cpu().numpy()
                 rollout_cm = np.array([rollout(attention_cm[j], res=True) for j in range(len(attention_cm))])
+                attentionNorm_cm = normalize(torch.stack(outputs['context_mixings']['attention_norm']).permute(1, 0, 2, 3).detach().cpu().numpy())
 
                 cueWords_attention_cm = self._extract_cue_words_cm(attention_cm, batch_lengths, batch_cues_tokenIdxes)
                 cueWords_rollout_cm = self._extract_cue_words_cm(rollout_cm, batch_lengths, batch_cues_tokenIdxes)
+                cueWords_attentionNorm_cm = self._extract_cue_words_cm(attentionNorm_cm, batch_lengths, batch_cues_tokenIdxes)
+
 
                 # these cue_words_cm have shape => (batch_size, layer, num_cues)
                 shuffled_data['cueWords_attention_CM_all_layers'].extend(torch.stack(cueWords_attention_cm, dim=2))
                 shuffled_data['cueWords_rollout_CM_all_layers'].extend(torch.stack(cueWords_rollout_cm, dim=2))
+                shuffled_data['cueWords_attentionNorm_CM_all_layers'].extend(torch.stack(cueWords_attentionNorm_cm, dim=2))
 
         # reorder retrieved data
         inverse_idxes = np.argsort(idxes)
