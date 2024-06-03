@@ -84,9 +84,9 @@ class dataset2cuesCM:
 
     def _extract_cue_words_cm(self, cm, batch_lengths, batch_cues_tokenIdxes):
         cue_words_cm = []
-        for c in range(3):
+        for c in range(self.num_cues):
             cue_tokens_cm = [cm[j][:, batch_lengths[j]-2, batch_cues_tokenIdxes[j][c][0]: batch_cues_tokenIdxes[j][c][1]] for j in range(len(cm))]
-            cue_word_cm = np.array([np.sum(cue_token_cm, axis=1) for cue_token_cm in cue_tokens_cm])
+            cue_word_cm = np.array([np.max(cue_token_cm, axis=1) for cue_token_cm in cue_tokens_cm])
             cue_words_cm.append(torch.tensor(cue_word_cm))
         return cue_words_cm
 
