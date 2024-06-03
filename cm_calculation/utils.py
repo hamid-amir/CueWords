@@ -193,16 +193,19 @@ class dataset2cuesCM:
 
         # we are going to retrieve these values
         shuffled_data = {
-            "cueWords_attention_CM_all_layers": [],      # tensor[layer, num_cues]
-            "cueWords_rollout_CM_all_layers": [],        # tensor[layer, num_cues]
-            "cueWords_attentionNorm_CM_all_layers": [],  # tensor[layer, num_cues]
+            "cueWords_attention_cm_all_layers": [],   # tensor[layer, num_cues]
+            "cueWords_rollout_cm_all_layers": [],        
+            "cueWords_attentionNorm_cm_all_layers": [],  
+            "cueWords_attentionNormRes1_cm_all_layers": [],
+            "cueWords_attentionNormRes1Ln1_cm_all_layers": [],
+            "cueWords_valueZeroing_cm_all_layers": []
         }
 
         with torch.no_grad():
             for i in tqdm(range(steps), desc="Forwarding and extracting cue words context mixing scores"):
                 batch = next(it)
                 input_batch = {k: batch[k].to(DEVICE) for k in batch.keys() - ['idx', 'length', 'cues_tokenIdxes']}
-                cm_config = CMConfig(output_attention=True, output_attention_norm=True)
+                cm_config = CMConfig(output_attention=True, output_attention_norm=True, output_value_zeroing=True)
                 outputs = model(**input_batch, output_context_mixings=cm_config)
 
 
@@ -211,19 +214,19 @@ class dataset2cuesCM:
                 batch_cues_tokenIdxes = batch['cues_tokenIdxes'].numpy()
 
                 #  these cm have shape => (batch_size, layer, max_seqLen_batch, max_seqLen_batch)
-                attention_cm = torch.stack(outputs['context_mixings']['attention']).permute(1, 0, 2, 3).detach().cpu().numpy()
-                rollout_cm = np.array([rollout(attention_cm[j], res=True) for j in range(len(attention_cm))])
-                attentionNorm_cm = normalize(torch.stack(outputs['context_mixings']['attention_norm']).permute(1, 0, 2, 3).detach().cpu().numpy())
+                cms = {}
+                cms['attention_cm'] = torch.stack(outputs['context_mixings']['attention']).permute(1, 0, 2, 3).detach().cpu().numpy()
+                cms['rollout_cm'] = np.array([rollout(cms['attention_cm'][j], res=True) for j in range(len(cms['attention_cm']))])
+                cms['attentionNorm_cm'] = normalize(torch.stack(outputs['context_mixings']['attention_norm']).permute(1, 0, 2, 3).detach().cpu().numpy())
+                cms['attentionNormRes1_cm'] = normalize(torch.stack(outputs['context_mixings']['attention_norm_res']).permute(1, 0, 2, 3).detach().cpu().numpy())
+                cms['attentionNormRes1Ln1_cm'] = normalize(torch.stack(outputs['context_mixings']['attention_norm_res_ln']).permute(1, 0, 2, 3).detach().cpu().numpy())
+                cms['valueZeroing_cm'] = normalize(torch.stack(outputs['context_mixings']['value_zeroing']).permute(1, 0, 2, 3).detach().cpu().numpy())
 
-                cueWords_attention_cm = self._extract_cue_words_cm(attention_cm, batch_lengths, batch_cues_tokenIdxes)
-                cueWords_rollout_cm = self._extract_cue_words_cm(rollout_cm, batch_lengths, batch_cues_tokenIdxes)
-                cueWords_attentionNorm_cm = self._extract_cue_words_cm(attentionNorm_cm, batch_lengths, batch_cues_tokenIdxes)
 
-
-                # these cue_words_cm have shape => (batch_size, layer, num_cues)
-                shuffled_data['cueWords_attention_CM_all_layers'].extend(torch.stack(cueWords_attention_cm, dim=2))
-                shuffled_data['cueWords_rollout_CM_all_layers'].extend(torch.stack(cueWords_rollout_cm, dim=2))
-                shuffled_data['cueWords_attentionNorm_CM_all_layers'].extend(torch.stack(cueWords_attentionNorm_cm, dim=2))
+                for cm in cms.keys():
+                    # torch.stack(cueWords_cm, dim=2) have shape => (batch_size, layer, num_cues)
+                    cueWords_cm = self._extract_cue_words_cm(cms[cm], batch_lengths, batch_cues_tokenIdxes)
+                    shuffled_data[f"cueWords_{cm}_all_layers"].extend(torch.stack(cueWords_cm, dim=2))
 
         # reorder retrieved data
         inverse_idxes = np.argsort(idxes)
