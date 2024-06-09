@@ -30,4 +30,4 @@ for model_ckpt in MODEL_CHECKPOINTS:
       file_name = model_ckpt + '_' + dataset_path.split('/')[-1].split('.')[-2] + '_' + str(num_cues) + '.pkl'
       df.to_pickle(OUTPUT_DIR + file_name)
       print(OUTPUT_DIR + file_name)
-      print("=========================================")
+      print("="*50)

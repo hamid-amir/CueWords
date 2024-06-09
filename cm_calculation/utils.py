@@ -97,7 +97,7 @@ class dataset2cuesCM:
         various interpretability methods.
         """
         DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-        BATCH_SIZE = 16
+        BATCH_SIZE = 1
 
         # load gender_agreement dataset
         dataset = load_dataset(self.dataset_path.split('.')[-1], data_files=self.dataset_path)

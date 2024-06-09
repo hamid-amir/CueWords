@@ -22,6 +22,9 @@ FEMALE_NONPOS_NAMES = ['woman', 'wife', 'actress', 'princess', 'waitress', 'quee
 MALE_POS_NAMES = ['father', 'dad', 'brother', 'nephew', 'boy', 'uncle', 'son', 'grandfather', 'grandson']
 FEMALE_POS_NAMES = ['mother', 'mom', 'sister', 'niece', 'girl', 'aunt', 'daughter', 'grandmother', 'granddaughter']
 
+# we will filter any example that has at least on of these occurances
+EXCLUDES = ['also known', 'better known', 'ive jerolimov']
+
 MIN_PRONOUN = 2
 MAX_PRONOUN = 6
 ###############################################################
@@ -38,8 +41,9 @@ nlp = spacy.load("en_core_web_sm")
 # we will just keep the examples that has exactly two parts names + text starts with this name
 # note: there is a funny bug with "ive jerolimov" example, so we will exclude it
 def name_filter(example:Dict) -> Dict:
-  if "also known" in example['target_text'] or "ive jerolimov" in example['target_text']:
-    return False
+  for exclude in EXCLUDES:
+    if exclude in example['target_text']:
+      return False
 
   name = None
   if 'name' in example['input_text']['table']['column_header']:
