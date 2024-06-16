@@ -19,6 +19,7 @@ from context_mixing_toolkit.src.modeling_bert import BertModel
 from context_mixing_toolkit.src.modeling_roberta import RobertaModel
 from context_mixing_toolkit.src.modeling_gemma import GemmaModel
 from context_mixing_toolkit.src.utils import CMConfig, normalize, rollout
+from transformers import RobertaForMaskedLM
 
 
 
@@ -89,6 +90,15 @@ class dataset2cuesCM:
             cue_word_cm = np.array([np.max(cue_token_cm, axis=1) for cue_token_cm in cue_tokens_cm])
             cue_words_cm.append(torch.tensor(cue_word_cm))
         return cue_words_cm
+    
+
+    def _extract_pred_words_probs(predictions, batch_lengths, tokenizer):
+        preds_idxes = [torch.topk(predictions[j, batch_lengths[j]-2], 1).indices.tolist()[0] for j in range(len(predictions))]
+        preds_words = [tokenizer.decode([idx]) for idx in preds_idxes]
+        preds_probs = [torch.softmax(predictions, dim=0)[idx].item() for idx in preds_idxes]
+        
+        return preds_words, preds_probs
+
 
 
     def retrieveCM(self) -> pd.DataFrame:
@@ -107,6 +117,10 @@ class dataset2cuesCM:
 
         # set up the model
         if "roberta" in self.model_checkpoint:
+            # first load the model with masked lm head and save it's head
+            model = RobertaForMaskedLM.from_pretrained(self.model_checkpoint)
+            lm_head = model.lm_head
+            del model
             model = RobertaModel.from_pretrained(self.model_checkpoint)
         elif "bert" in self.model_checkpoint:
             model = BertModel.from_pretrained(self.model_checkpoint)
@@ -193,6 +207,8 @@ class dataset2cuesCM:
 
         # we are going to retrieve these values
         shuffled_data = {
+            "model_top1_prediction": [],  # str
+            "model_top1_confidence": [],  # float
             "cueWords_attention_cm_all_layers": [],   # tensor[layer, num_cues]
             "cueWords_rollout_cm_all_layers": [],        
             "cueWords_attentionNorm_cm_all_layers": [],  
@@ -208,10 +224,15 @@ class dataset2cuesCM:
                 cm_config = CMConfig(output_attention=True, output_attention_norm=True, output_value_zeroing=True)
                 outputs = model(**input_batch, output_context_mixings=cm_config)
 
-
                 idxes.extend(batch['idx'].tolist())
                 batch_lengths = batch["length"].numpy()
                 batch_cues_tokenIdxes = batch['cues_tokenIdxes'].numpy()
+
+                # predictions shape => (batch_size, max_seqLen_batch, vocab_size)
+                predictions = lm_head(outputs['last_hidden_state'])
+                preds_words, preds_probs = self._extract_pred_words_probs(predictions, batch_lengths, tokenizer)
+                shuffled_data['model_top1_prediction'].extend(preds_words)
+                shuffled_data['model_top1_confidence'].extend(preds_probs)
 
                 #  these cm have shape => (batch_size, layer, max_seqLen_batch, max_seqLen_batch)
                 cms = {}
@@ -221,7 +242,6 @@ class dataset2cuesCM:
                 cms['attentionNormRes1_cm'] = normalize(torch.stack(outputs['context_mixings']['attention_norm_res']).permute(1, 0, 2, 3).detach().cpu().numpy())
                 cms['attentionNormRes1Ln1_cm'] = normalize(torch.stack(outputs['context_mixings']['attention_norm_res_ln']).permute(1, 0, 2, 3).detach().cpu().numpy())
                 cms['valueZeroing_cm'] = normalize(torch.stack(outputs['context_mixings']['value_zeroing']).permute(1, 0, 2, 3).detach().cpu().numpy())
-
 
                 for cm in cms.keys():
                     # torch.stack(cueWords_cm, dim=2) have shape => (batch_size, layer, num_cues)
