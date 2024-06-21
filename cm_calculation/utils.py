@@ -107,7 +107,7 @@ class dataset2cuesCM:
         various interpretability methods.
         """
         DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-        BATCH_SIZE = 1
+        BATCH_SIZE = 2
 
         # load gender_agreement dataset
         dataset = load_dataset(self.dataset_path.split('.')[-1], data_files=self.dataset_path)
@@ -229,7 +229,8 @@ class dataset2cuesCM:
                 batch_cues_tokenIdxes = batch['cues_tokenIdxes'].numpy()
 
                 # predictions shape => (batch_size, max_seqLen_batch, vocab_size)
-                predictions = lm_head(outputs['last_hidden_state'].to(DEVICE))
+                lm_head = lm_head.to(DEVICE)
+                predictions = lm_head(outputs['last_hidden_state'])
                 preds_words, preds_probs = self._extract_pred_words_probs(predictions, batch_lengths, tokenizer)
                 shuffled_data['model_top1_prediction'].extend(preds_words)
                 shuffled_data['model_top1_confidence'].extend(preds_probs)

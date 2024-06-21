@@ -101,7 +101,7 @@ def main(model_checkpoint):
         model = BertForMaskedLM.from_pretrained(model_checkpoint, config=config) 
     else:
         print(model_checkpoint + ' not implemented!')      
-        
+
     target2id = {token:tokenizer.encode(' '+token)[1] for token in MALE_PRONOUNS + FEMALE_PRONOUNS}
     id2label = {token_id: i for i,token_id in enumerate(target2id.values())}
     model.label_word_list = list(target2id.values())
@@ -148,8 +148,12 @@ def main(model_checkpoint):
         print(evaluate(model, test_loader, device))
 
     # Save the model
-    model.save_pretrained(f'./finetuned_{model_checkpoint.split('-')[0]}')
-    tokenizer.save_pretrained(f'./finetuned_{model_checkpoint.split('-')[0]}')
+    try:
+        model.save_pretrained(f'./finetuned_{model_checkpoint.split('-')[0]}')
+        tokenizer.save_pretrained(f'./finetuned_{model_checkpoint.split('-')[0]}')
+        print(f'{model_checkpoint} fine-tuned on the gender_agreement dataset was saved successfully!')
+    except:
+        print('An error occured while saving the fine-tuned model.')
 
 
 
