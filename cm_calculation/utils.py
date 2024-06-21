@@ -92,10 +92,10 @@ class dataset2cuesCM:
         return cue_words_cm
     
 
-    def _extract_pred_words_probs(predictions, batch_lengths, tokenizer):
+    def _extract_pred_words_probs(self, predictions, batch_lengths, tokenizer):
         preds_idxes = [torch.topk(predictions[j, batch_lengths[j]-2], 1).indices.tolist()[0] for j in range(len(predictions))]
         preds_words = [tokenizer.decode([idx]) for idx in preds_idxes]
-        preds_probs = [torch.softmax(predictions, dim=0)[idx].item() for idx in preds_idxes]
+        preds_probs = [torch.softmax(predictions, dim=0)[j, batch_lengths[j]-2, idx].item() for j,idx in enumerate(preds_idxes)]
         
         return preds_words, preds_probs
 
@@ -229,7 +229,7 @@ class dataset2cuesCM:
                 batch_cues_tokenIdxes = batch['cues_tokenIdxes'].numpy()
 
                 # predictions shape => (batch_size, max_seqLen_batch, vocab_size)
-                predictions = lm_head(outputs['last_hidden_state'])
+                predictions = lm_head(outputs['last_hidden_state'].to(DEVICE))
                 preds_words, preds_probs = self._extract_pred_words_probs(predictions, batch_lengths, tokenizer)
                 shuffled_data['model_top1_prediction'].extend(preds_words)
                 shuffled_data['model_top1_confidence'].extend(preds_probs)
