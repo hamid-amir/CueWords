@@ -1,11 +1,12 @@
 import torch
-from torch.utils.data import DataLoader, Dataset
-from transformers import RobertaTokenizer, RobertaConfig, AdamW, get_linear_schedule_with_warmup
-from tqdm import tqdm
-from modelsForPromptFinetuning import BertForPromptFinetuning, RobertaForPromptFinetuning
+from torch.utils.data import DataLoader
+from transformers import RobertaTokenizer, BertTokenizer, AdamW, get_linear_schedule_with_warmup
+from transformers import DataCollatorWithPadding
+from transformers import AutoConfig
 from datasets import load_dataset
-from transformers import DataCollatorWithPadding, RobertaForMaskedLM
-from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer, EvalPrediction
+from tqdm import tqdm
+from modelsForPromptFinetuning import RobertaForMaskedLM, BertForMaskedLM
+
 
 
 
@@ -19,12 +20,10 @@ def train(model, dataloader, optimizer, scheduler, device):
         input_ids = batch['input_ids'].to(device)
         attention_mask = batch['attention_mask'].to(device)
         labels = batch['label_idx'].to(device)
-        mask_pos = batch['mask_pos'].to(device)
 
         outputs = model(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            mask_pos=mask_pos,
             labels=labels,
         )
         loss = outputs[0]
@@ -44,12 +43,10 @@ def evaluate(model, dataloader, device):
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
             labels = batch['label_idx'].to(device)
-            mask_pos = batch['mask_pos'].to(device)
         
             outputs = model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
-                mask_pos=mask_pos,
             )
 
             logits = outputs[0]
@@ -58,7 +55,7 @@ def evaluate(model, dataloader, device):
                 if pred_id == label:
                     correct += 1
                 total += 1
-        return f'exact match accuracy on the test loader: {100 * correct/total}%'
+        return f'accuracy on the test loader: {100 * correct/total}%'
 
 
 def _suitable_mask(examples):
@@ -87,22 +84,24 @@ MALE_PRONOUNS = ['he', 'his', 'him', 'himself']
 FEMALE_PRONOUNS = ['she', 'her', 'hers', 'herself']
 
 
-def main():
+def main(model_checkpoint):
     BATCH_SIZE = 8
     # Setup
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model_checkpoint = 'roberta-base'
-    tokenizer = RobertaTokenizer.from_pretrained(model_checkpoint)
-    num_labels = sum([len(pronouns) for pronouns in [MALE_PRONOUNS, FEMALE_PRONOUNS]])
 
     # Create config
-    config = AutoConfig.from_pretrained(
-        model_checkpoint,
-        num_labels=num_labels
-    )
+    config = AutoConfig.from_pretrained(model_checkpoint)
 
-    # Initialize the model
-    model = RobertaForPromptFinetuning.from_pretrained(model_checkpoint, config=config)
+    # Initialize the model and tokenizer
+    if 'roberta' in model_checkpoint:
+        tokenizer = RobertaTokenizer.from_pretrained(model_checkpoint)
+        model = RobertaForMaskedLM.from_pretrained(model_checkpoint, config=config)
+    elif 'bert' in model_checkpoint:
+        tokenizer = BertTokenizer.from_pretrained(model_checkpoint)
+        model = BertForMaskedLM.from_pretrained(model_checkpoint, config=config) 
+    else:
+        print(model_checkpoint + ' not implemented!')      
+        
     target2id = {token:tokenizer.encode(' '+token)[1] for token in MALE_PRONOUNS + FEMALE_PRONOUNS}
     id2label = {token_id: i for i,token_id in enumerate(target2id.values())}
     model.label_word_list = list(target2id.values())
@@ -112,14 +111,14 @@ def main():
     dataset = load_dataset('json', data_files='data/'+'gender_agreement.json', split='train')
     dataset = dataset.map(_suitable_mask, batched=True, batch_size=1024)
     dataset = dataset.map(_preprocess_function_wrapped(tokenizer), batched=True, batch_size=1024)
-    dataset = dataset.add_column("mask_pos", [len(example['input_ids'])-2 for example in dataset])
+    # dataset = dataset.add_column("mask_pos", [len(example['input_ids'])-2 for example in dataset])
     dataset = dataset.add_column("target_word_id", [target2id[example['target_word']] for example in dataset])
     dataset = dataset.add_column("label_idx", [id2label[example['target_word_id']] for example in dataset])
     dataset = dataset.filter(_check_input_length_wrapped(model), batched=False)
     dataset = dataset.train_test_split(test_size=0.2, shuffle=False)
 
     collator = DataCollatorWithPadding(tokenizer=tokenizer)
-    cols = ["input_ids", "attention_mask", "label_idx", "mask_pos"]
+    cols = ["input_ids", "attention_mask", "label_idx"]
     dataset.set_format(type="torch", columns=cols)
 
     train_loader = DataLoader(
@@ -140,6 +139,7 @@ def main():
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
 
     # Training loop
+    print(f'{model_checkpoint} evaluation w/o fine-tuning:', evaluate(model, test_loader, device))
     epochs = 2
     for epoch in range(epochs):
         print(f"Epoch {epoch + 1}/{epochs}")
@@ -148,13 +148,11 @@ def main():
         print(evaluate(model, test_loader, device))
 
     # Save the model
-    replaced_model = RobertaForMaskedLM.from_pretrained('roberta-base')
-    replaced_model.roberta = model.roberta
-    replaced_model.lm_head = model.lm_head
-    replaced_model.save_pretrained('./finetuned_roberta')
-    tokenizer.save_pretrained('./finetuned_roberta')
+    model.save_pretrained(f'./finetuned_{model_checkpoint.split('-')[0]}')
+    tokenizer.save_pretrained(f'./finetuned_{model_checkpoint.split('-')[0]}')
 
 
 
 if __name__ == "__main__":
-    main()
+    main('roberta-base')
+    main('bert-base-uncased')
