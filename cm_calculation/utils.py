@@ -19,7 +19,7 @@ from context_mixing_toolkit.src.modeling_bert import BertModel
 from context_mixing_toolkit.src.modeling_roberta import RobertaModel
 from context_mixing_toolkit.src.modeling_gemma import GemmaModel
 from context_mixing_toolkit.src.utils import CMConfig, normalize, rollout
-from transformers import RobertaForMaskedLM
+from transformers import RobertaForMaskedLM, BertForMaskedLM, GemmaForCausalLM
 
 
 
@@ -48,6 +48,11 @@ class dataset2cuesCM:
         for cue_word in sample['cue_words']:
             cue, cue_start, cue_end = cue_word.split('|')
             cue_start, cue_end = int(cue_start), int(cue_end)
+
+            if 'gemma' in self.model_checkpoint:
+              if cue_start > 0:
+                if text[cue_start - 1] == ' ':
+                  cue_start -= 1
 
             word_token_positions = []
             for i, (start, end) in enumerate(offsets):
@@ -93,9 +98,10 @@ class dataset2cuesCM:
     
 
     def _extract_pred_words_probs(self, predictions, batch_lengths, tokenizer):
-        preds_idxes = [torch.topk(predictions[j, batch_lengths[j]-2], 1).indices.tolist()[0] for j in range(len(predictions))]
+        offset = 1 if 'gemma' in self.model_checkpoint else 0
+        preds_idxes = [torch.topk(predictions[j, batch_lengths[j]-2+offset], 1).indices.tolist()[0] for j in range(len(predictions))]
         preds_words = [tokenizer.decode([idx]) for idx in preds_idxes]
-        preds_probs = [torch.softmax(predictions, dim=0)[j, batch_lengths[j]-2, idx].item() for j,idx in enumerate(preds_idxes)]
+        preds_probs = [torch.softmax(predictions, dim=0)[j, batch_lengths[j]-2+offset, idx].item() for j,idx in enumerate(preds_idxes)]
         
         return preds_words, preds_probs
 
@@ -121,11 +127,19 @@ class dataset2cuesCM:
         if "roberta" in self.model_checkpoint:
             # first load the model with masked lm head and save it's head
             model = RobertaForMaskedLM.from_pretrained(self.model_checkpoint)
-            lm_head = model.lm_head
+            head = model.head
             del model
             model = RobertaModel.from_pretrained(self.model_checkpoint)
         elif "bert" in self.model_checkpoint:
+            model = BertForMaskedLM.from_pretrained(self.model_checkpoint)
+            head = model.cls
+            del model
             model = BertModel.from_pretrained(self.model_checkpoint)
+        elif "gemma" in self.model_checkpoint:
+            model = GemmaForCausalLM.from_pretrained(self.model_checkpoint, attn_implementation='eager')
+            head = model.lm_head
+            del model
+            model = GemmaModel.from_pretrained(self.model_checkpoint, attn_implementation='eager')
         else:
             print(self.model_checkpoint + ' not implemented!')
 
@@ -180,7 +194,7 @@ class dataset2cuesCM:
         sel_dataset = sel_dataset.add_column("length", lengths)
         sel_dataset = sel_dataset.add_column("cues_tokenIdxes", all_cues_tokenIdxes)
         cols = ["input_ids", "attention_mask", "idx", "length", "cues_tokenIdxes"]
-        cols = cols + ["token_type_ids"] if not "roberta" in self.model_checkpoint else cols
+        # cols = cols + ["token_type_ids"] if not "roberta" in self.model_checkpoint else cols
         sel_dataset.set_format(type="torch", columns=cols)
 
 
@@ -231,8 +245,8 @@ class dataset2cuesCM:
                 batch_cues_tokenIdxes = batch['cues_tokenIdxes'].numpy()
 
                 # predictions shape => (batch_size, max_seqLen_batch, vocab_size)
-                lm_head = lm_head.to(DEVICE)
-                predictions = lm_head(outputs['last_hidden_state'])
+                head = head.to(DEVICE)
+                predictions = head(outputs['last_hidden_state'])
                 preds_words, preds_probs = self._extract_pred_words_probs(predictions, batch_lengths, tokenizer)
                 shuffled_data['model_top1_prediction'].extend(preds_words)
                 shuffled_data['model_top1_confidence'].extend(preds_probs)
