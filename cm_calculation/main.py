@@ -8,7 +8,7 @@ OUTPUT_DIR = "results/"
 if not os.path.exists(OUTPUT_DIR):
   os.makedirs(OUTPUT_DIR)
 
-MODEL_CHECKPOINTS = ['roberta-base', './finedtuned_roberta']
+MODEL_CHECKPOINTS = ['roberta-base', './finetuned_roberta']
 DATASET_PATHS = ['data/gender_agreement.json']
 MIN_NUM_CUES = 3
 MAX_NUM_CUES = 10

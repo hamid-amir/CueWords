@@ -108,6 +108,8 @@ class dataset2cuesCM:
         """
         DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
         BATCH_SIZE = 2
+        if self.num_cues > 8:
+            BATCH_SIZE = 1
 
         # load gender_agreement dataset
         dataset = load_dataset(self.dataset_path.split('.')[-1], data_files=self.dataset_path)

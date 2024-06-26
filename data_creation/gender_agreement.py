@@ -32,7 +32,7 @@ MAX_PRONOUN = 6
 
 
 # download test split of wiki_bio dataset from Huggingface Datsets
-wiki_bio_dataset = load_dataset('wiki_bio', split='test')
+wiki_bio_dataset = load_dataset('wiki_bio', split='test', trust_remote_code=True)
 
 # initialize SpaCy for English
 nlp = spacy.load("en_core_web_sm")

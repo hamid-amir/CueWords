@@ -149,8 +149,8 @@ def main(model_checkpoint):
 
     # Save the model
     try:
-        model.save_pretrained(f'./finetuned_{model_checkpoint.split('-')[0]}')
-        tokenizer.save_pretrained(f'./finetuned_{model_checkpoint.split('-')[0]}')
+        model.save_pretrained(f"./finetuned_{model_checkpoint.split('-')[0]}")
+        tokenizer.save_pretrained(f"./finetuned_{model_checkpoint.split('-')[0]}")
         print(f'{model_checkpoint} fine-tuned on the gender_agreement dataset was saved successfully!')
     except:
         print('An error occured while saving the fine-tuned model.')
@@ -159,4 +159,4 @@ def main(model_checkpoint):
 
 if __name__ == "__main__":
     main('roberta-base')
-    main('bert-base-uncased')
+    # main('bert-base-uncased')
