@@ -66,6 +66,9 @@ class dataset2cuesCM:
     def _suitable_mask(self, examples):
         if 'roberta' in self.model_checkpoint:
             examples['masked_text'] = [text.replace('[MASK]', '<mask>') for text in examples['masked_text']]
+        elif 'gemma' in self.model_checkpoint:
+            examples['masked_text'] = [text.replace(' [MASK]', '') for text in examples['masked_text']]
+            examples['masked_text'] = [text.replace('[MASK]', '') for text in examples['masked_text']]
         return examples
 
 
@@ -238,6 +241,8 @@ class dataset2cuesCM:
                 batch = next(it)
                 input_batch = {k: batch[k].to(DEVICE) for k in batch.keys() - ['idx', 'length', 'cues_tokenIdxes']}
                 cm_config = CMConfig(output_attention=True, output_attention_norm=True, output_value_zeroing=True)
+                if 'gemma' in self.model_checkpoint:
+                    cm_config = CMConfig(output_attention=True, output_value_zeroing=True)
                 outputs = model(**input_batch, output_context_mixings=cm_config)
 
                 idxes.extend(batch['idx'].tolist())
@@ -255,9 +260,10 @@ class dataset2cuesCM:
                 cms = {}
                 cms['attention_cm'] = torch.stack(outputs['context_mixings']['attention']).permute(1, 0, 2, 3).detach().cpu().numpy()
                 cms['rollout_cm'] = np.array([rollout(cms['attention_cm'][j], res=True) for j in range(len(cms['attention_cm']))])
-                cms['attentionNorm_cm'] = normalize(torch.stack(outputs['context_mixings']['attention_norm']).permute(1, 0, 2, 3).detach().cpu().numpy())
-                cms['attentionNormRes1_cm'] = normalize(torch.stack(outputs['context_mixings']['attention_norm_res']).permute(1, 0, 2, 3).detach().cpu().numpy())
-                cms['attentionNormRes1Ln1_cm'] = normalize(torch.stack(outputs['context_mixings']['attention_norm_res_ln']).permute(1, 0, 2, 3).detach().cpu().numpy())
+                if 'gemma' not in self.model_checkpoint:
+                    cms['attentionNorm_cm'] = normalize(torch.stack(outputs['context_mixings']['attention_norm']).permute(1, 0, 2, 3).detach().cpu().numpy())
+                    cms['attentionNormRes1_cm'] = normalize(torch.stack(outputs['context_mixings']['attention_norm_res']).permute(1, 0, 2, 3).detach().cpu().numpy())
+                    cms['attentionNormRes1Ln1_cm'] = normalize(torch.stack(outputs['context_mixings']['attention_norm_res_ln']).permute(1, 0, 2, 3).detach().cpu().numpy())
                 cms['valueZeroing_cm'] = normalize(torch.stack(outputs['context_mixings']['value_zeroing']).permute(1, 0, 2, 3).detach().cpu().numpy())
 
                 for cm in cms.keys():
