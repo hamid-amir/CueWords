@@ -221,10 +221,11 @@ wiki_bio_dataset_filtered = wiki_bio_dataset.filter(name_filter)
 updated_dataset = wiki_bio_dataset_filtered.map(specify_gender)
 updated_dataset_filtered = updated_dataset.filter(num_pronouns_filter)
 gender_agreement_dataset = updated_dataset_filtered.map(create_dataset)
+split_dataset = gender_agreement_dataset.train_test_split(test_size=0.4)
 
 
-# save the resulting dataset as a json file
+# save the resulting dataset to the disk
 DATA_DIR = 'data/'
 if not os.path.exists(DATA_DIR):
   os.makedirs(DATA_DIR)
-gender_agreement_dataset.to_json(DATA_DIR + 'gender_agreement.json') 
+split_dataset.save_to_disk(os.path.join(DATA_DIR, 'gender_agreement'))
