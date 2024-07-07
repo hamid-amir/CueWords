@@ -3,160 +3,163 @@ from torch.utils.data import DataLoader
 from transformers import RobertaTokenizer, BertTokenizer, AdamW, get_linear_schedule_with_warmup
 from transformers import DataCollatorWithPadding
 from transformers import AutoConfig
-from datasets import load_dataset
+from datasets import load_from_disk
 from tqdm import tqdm
 from modelsForPromptFinetuning import RobertaForMaskedLM, BertForMaskedLM
 
 
 
+class FineTuner:
+    MALE_PRONOUNS = ['he', 'his', 'him', 'himself']
+    FEMALE_PRONOUNS = ['she', 'her', 'hers', 'herself']
 
+    def __init__(self, model_checkpoint, dataset_path, batch_size=8, epochs=2, learning_rate=5e-5):
+        self.model_checkpoint = model_checkpoint
+        self.dataset_path = dataset_path
+        self.batch_size = batch_size
+        self.epochs = epochs
+        self.learning_rate = learning_rate
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def train(model, dataloader, optimizer, scheduler, device):
-    model = model.train()
-    total_loss = 0
+        self._setup_model_and_tokenizer()
 
-    for batch in tqdm(dataloader, desc="Fine-tuning"):
-        optimizer.zero_grad()
-        input_ids = batch['input_ids'].to(device)
-        attention_mask = batch['attention_mask'].to(device)
-        labels = batch['label_idx'].to(device)
-
-        outputs = model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            labels=labels,
-        )
-        loss = outputs[0]
-        loss.backward()
-        optimizer.step()
-        scheduler.step()
-        total_loss += loss.item()
-
-    return total_loss / len(dataloader)
-
-
-def evaluate(model, dataloader, device):
-    model = model.eval()
-    with torch.no_grad():
-        correct, total = 0, 0
-        for batch in tqdm(dataloader, desc="Evaluating on test loader"):
-            input_ids = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            labels = batch['label_idx'].to(device)
+    def _setup_model_and_tokenizer(self):
+        config = AutoConfig.from_pretrained(self.model_checkpoint)
         
-            outputs = model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-            )
+        if 'roberta' in self.model_checkpoint:
+            self.tokenizer = RobertaTokenizer.from_pretrained(self.model_checkpoint)
+            self.model = RobertaForMaskedLM.from_pretrained(self.model_checkpoint, config=config)
+        elif 'bert' in self.model_checkpoint:
+            self.tokenizer = BertTokenizer.from_pretrained(self.model_checkpoint)
+            self.model = BertForMaskedLM.from_pretrained(self.model_checkpoint, config=config)
+        else:
+            raise NotImplementedError(f"{self.model_checkpoint} not implemented!")
+        
+        self.target2id = {token: self.tokenizer.encode(' ' + token)[1] for token in self.MALE_PRONOUNS + self.FEMALE_PRONOUNS}
+        self.id2label = {token_id: i for i, token_id in enumerate(self.target2id.values())}
+        self.model.label_word_list = list(self.target2id.values())
+        self.model.to(self.device)
 
-            logits = outputs[0]
-            pred_ids = torch.max(logits, dim=1).indices
-            for pred_id, label in zip(pred_ids, labels):
-                if pred_id == label:
-                    correct += 1
-                total += 1
-        return f'accuracy on the test loader: {100 * correct/total}%'
+    def _suitable_mask(self, examples):
+        if 'roberta' in self.model_checkpoint:
+            examples['masked_text'] = [text.replace('[MASK]', '<mask>') for text in examples['masked_text']]
 
-
-def _suitable_mask(examples):
-    examples['masked_text'] = [text.replace('[MASK]', '<mask>') for text in examples['masked_text']]
-    return examples
-
-def _preprocess_function_wrapped(tokenizer):
-    def preprocess_function(examples):
-        # Tokenize the texts
-        args = (examples['masked_text'],)
-        result = tokenizer(*args, padding=False, truncation=False)
+    def _preprocess_function(self, example):
+        mask_token = '[MASK]' if '[MASK]' in example['masked_text'] else '<mask>'
+        mask_idx = example['masked_text'].split().index(mask_token)
+        text = example['target_text'].split()
+        text[mask_idx] = mask_token
+        args = (' '.join(text),)
+        result = self.tokenizer(*args, padding=False, truncation=False)
         return result
-    return preprocess_function
 
-def _check_input_length_wrapped(model):
-    def check_input_length(example):
-        config = model.config
+    def _check_input_length(self, example):
+        config = self.model.config
         max_input_length = config.max_position_embeddings - 2
         if len(example['input_ids']) > max_input_length:
             return False
         return True
-    return check_input_length
 
+    def prepare_data(self):
+        dataset = load_from_disk(self.dataset_path)
+        dataset = dataset.map(self._suitable_mask, batched=True, batch_size=1024)
+        dataset = dataset.map(self._preprocess_function, batched=True, batched=False)
+        dataset = dataset.add_column("target_word_id", [self.target2id[example['target_word']] for example in dataset])
+        dataset = dataset.add_column("label_idx", [self.id2label[example['target_word_id']] for example in dataset])
+        dataset = dataset.filter(self._check_input_length, batched=False)
 
-MALE_PRONOUNS = ['he', 'his', 'him', 'himself']
-FEMALE_PRONOUNS = ['she', 'her', 'hers', 'herself']
+        collator = DataCollatorWithPadding(tokenizer=self.tokenizer)
+        cols = ["input_ids", "attention_mask", "label_idx"]
+        dataset.set_format(type="torch", columns=cols)
 
+        train_loader = DataLoader(
+            dataset['train'],
+            batch_size=self.batch_size,
+            collate_fn=collator,
+        )
 
-def main(model_checkpoint):
-    BATCH_SIZE = 8
-    # Setup
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        test_loader = DataLoader(
+            dataset['test'],
+            batch_size=self.batch_size,
+            collate_fn=collator,
+        )
 
-    # Create config
-    config = AutoConfig.from_pretrained(model_checkpoint)
+        return train_loader, test_loader
+    
+    def train(self, dataloader, optimizer, scheduler):
+        self.model.train()
+        total_loss = 0
 
-    # Initialize the model and tokenizer
-    if 'roberta' in model_checkpoint:
-        tokenizer = RobertaTokenizer.from_pretrained(model_checkpoint)
-        model = RobertaForMaskedLM.from_pretrained(model_checkpoint, config=config)
-    elif 'bert' in model_checkpoint:
-        tokenizer = BertTokenizer.from_pretrained(model_checkpoint)
-        model = BertForMaskedLM.from_pretrained(model_checkpoint, config=config) 
-    else:
-        print(model_checkpoint + ' not implemented!')      
+        for batch in tqdm(dataloader, desc="Fine-tuning"):
+            optimizer.zero_grad()
+            input_ids = batch['input_ids'].to(self.device)
+            attention_mask = batch['attention_mask'].to(self.device)
+            labels = batch['label_idx'].to(self.device)
 
-    target2id = {token:tokenizer.encode(' '+token)[1] for token in MALE_PRONOUNS + FEMALE_PRONOUNS}
-    id2label = {token_id: i for i,token_id in enumerate(target2id.values())}
-    model.label_word_list = list(target2id.values())
-    model.to(device)
+            outputs = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                labels=labels,
+            )
+            loss = outputs[0]
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+            total_loss += loss.item()
 
-    # Prepare data
-    dataset = load_dataset('json', data_files='data/'+'gender_agreement.json', split='train')
-    dataset = dataset.map(_suitable_mask, batched=True, batch_size=1024)
-    dataset = dataset.map(_preprocess_function_wrapped(tokenizer), batched=True, batch_size=1024)
-    # dataset = dataset.add_column("mask_pos", [len(example['input_ids'])-2 for example in dataset])
-    dataset = dataset.add_column("target_word_id", [target2id[example['target_word']] for example in dataset])
-    dataset = dataset.add_column("label_idx", [id2label[example['target_word_id']] for example in dataset])
-    dataset = dataset.filter(_check_input_length_wrapped(model), batched=False)
-    dataset = dataset.train_test_split(test_size=0.2, shuffle=False)
+        return total_loss / len(dataloader)
 
-    collator = DataCollatorWithPadding(tokenizer=tokenizer)
-    cols = ["input_ids", "attention_mask", "label_idx"]
-    dataset.set_format(type="torch", columns=cols)
+    def evaluate(self, dataloader):
+        self.model.eval()
+        with torch.no_grad():
+            correct, total = 0, 0
+            for batch in tqdm(dataloader, desc="Evaluating on test loader"):
+                input_ids = batch['input_ids'].to(self.device)
+                attention_mask = batch['attention_mask'].to(self.device)
+                labels = batch['label_idx'].to(self.device)
+            
+                outputs = self.model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                )
 
-    train_loader = DataLoader(
-        dataset['train'],
-        batch_size=BATCH_SIZE,
-        collate_fn=collator,
-    )
+                logits = outputs[0]
+                pred_ids = torch.max(logits, dim=1).indices
+                for pred_id, label in zip(pred_ids, labels):
+                    if pred_id == label:
+                        correct += 1
+                    total += 1
+            return f'accuracy on the test loader: {100 * correct / total}%'
 
-    test_loader = DataLoader(
-        dataset['test'],
-        batch_size=BATCH_SIZE,
-        collate_fn=collator,
-    )
+    def _save_model(self):
+        try:
+            self.model.save_pretrained(f"./finetuned-{self.model_checkpoint.split('-')[0]}")
+            self.tokenizer.save_pretrained(f"./finetuned-{self.model_checkpoint.split('-')[0]}")
+            print(f'{self.model_checkpoint} fine-tuning on the gender_agreement dataset was saved successfully!')
+        except Exception as e:
+            print(f'An error occurred while saving the fine-tuned model: {e}')
 
-    # Set up optimizer and scheduler
-    optimizer = AdamW(model.parameters(), lr=5e-5)
-    total_steps = len(train_loader) * 2 
-    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
+    def run(self):
+        train_loader, test_loader = self.prepare_data()
 
-    # Training loop
-    print(f'{model_checkpoint} evaluation w/o fine-tuning:', evaluate(model, test_loader, device))
-    epochs = 2
-    for epoch in range(epochs):
-        print(f"Epoch {epoch + 1}/{epochs}")
-        train_loss = train(model, train_loader, optimizer, scheduler, device)
-        print(f"Training loss: {train_loss}")
-        print(evaluate(model, test_loader, device))
+        optimizer = AdamW(self.model.parameters(), lr=self.learning_rate)
+        total_steps = len(train_loader) * self.epochs
+        scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
 
-    # Save the model
-    try:
-        model.save_pretrained(f"./finetuned_{model_checkpoint.split('-')[0]}")
-        tokenizer.save_pretrained(f"./finetuned_{model_checkpoint.split('-')[0]}")
-        print(f'{model_checkpoint} fine-tuned on the gender_agreement dataset was saved successfully!')
-    except:
-        print('An error occured while saving the fine-tuned model.')
+        print(f'{self.model_checkpoint} evaluation w/o fine-tuning and by just cofining the vocab:', self.evaluate(test_loader))
+        for epoch in range(self.epochs):
+            print(f"Epoch {epoch + 1}/{self.epochs}")
+            train_loss = self.train(train_loader, optimizer, scheduler)
+            print(f"Training loss: {train_loss}")
+            print(self.evaluate(test_loader))
+
+        self._save_model()
 
 
 
 if __name__ == "__main__":
-    main('roberta-base')
-    # main('bert-base-uncased')
+    finetuner = FineTuner('roberta-base', 'data/gender_agreement')
+    finetuner.run()
+
+    # finetuner = FineTuner('bert-base-uncased', 'data/gender_agreement')
+    # finetuner.run()

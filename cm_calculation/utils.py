@@ -2,7 +2,7 @@
 # !git clone https://github.com/hmohebbi/context_mixing_toolkit.git -q
 
 
-from datasets import load_dataset
+from datasets import load_from_disk
 import pandas as pd
 from tqdm import tqdm
 import random
@@ -23,7 +23,7 @@ from transformers import RobertaForMaskedLM, BertForMaskedLM, GemmaForCausalLM
 
 
 
-class dataset2cuesCM:
+class dataset2CMs:
     def __init__(
             self,
             model_checkpoint: str,
@@ -91,13 +91,14 @@ class dataset2cuesCM:
         return check_input_length
 
 
-    def _extract_cue_words_cm(self, cm, batch_lengths, batch_cues_tokenIdxes):
-        cue_words_cm = []
-        for c in range(self.num_cues):
-            cue_tokens_cm = [cm[j][:, batch_lengths[j]-2, batch_cues_tokenIdxes[j][c][0]: batch_cues_tokenIdxes[j][c][1]] for j in range(len(cm))]
-            cue_word_cm = np.array([np.max(cue_token_cm, axis=1) for cue_token_cm in cue_tokens_cm])
-            cue_words_cm.append(torch.tensor(cue_word_cm))
-        return cue_words_cm
+    # def _extract_cue_words_cm(self, cm, batch_lengths, batch_cues_tokenIdxes):
+    #     cue_words_cm = []
+    #     offset = 1 if 'gemma' in self.model_checkpoint else 0
+    #     for c in range(self.num_cues):
+    #         cue_tokens_cm = [cm[j][:, batch_lengths[j]-2+offset, batch_cues_tokenIdxes[j,c,0]: batch_cues_tokenIdxes[j,c,1]] for j in range(len(cm))]
+    #         cue_word_cm = np.array([np.max(cue_token_cm, axis=1) for cue_token_cm in cue_tokens_cm])
+    #         cue_words_cm.append(torch.tensor(cue_word_cm))
+    #     return cue_words_cm
     
 
     def _extract_pred_words_probs(self, predictions, batch_lengths, tokenizer):
@@ -121,16 +122,16 @@ class dataset2cuesCM:
             BATCH_SIZE = 1
 
         # load gender_agreement dataset
-        dataset = load_dataset(self.dataset_path.split('.')[-1], data_files=self.dataset_path)
+        dataset = load_from_disk(self.dataset_path)['test']
 
         # seperate examples that has the given number of cue words
-        sel_dataset = dataset['train'].filter(lambda example: len(example['cue_words'])==self.num_cues)
+        sel_dataset = dataset.filter(lambda example: len(example['cue_words'])==self.num_cues)
 
         # set up the model
         if "roberta" in self.model_checkpoint:
             # first load the model with masked lm head and save it's head
             model = RobertaForMaskedLM.from_pretrained(self.model_checkpoint)
-            head = model.head
+            head = model.lm_head
             del model
             model = RobertaModel.from_pretrained(self.model_checkpoint)
         elif "bert" in self.model_checkpoint:
@@ -166,9 +167,9 @@ class dataset2cuesCM:
 
         # we will output this final_data as a pandas dataframe
         final_data = {
-            "masked_text": [], # str
-            "target_word": [], # str
-            "cue_words": []    # List[str]
+            "masked_text": [], # List[str]
+            "target_word": [], # List[str]
+            "cue_words": []    # List[List[str]]
         }
 
         lengths = []
@@ -224,16 +225,19 @@ class dataset2cuesCM:
         it = iter(dataloader)
         idxes = []
 
-        # we are going to retrieve these values
+        # we are going to retrieve these values for the MASK token of each example
         shuffled_data = {
-            "model_top1_prediction": [],  # str
-            "model_top1_confidence": [],  # float
-            "cueWords_attention_cm_all_layers": [],   # tensor[layer, num_cues]
-            "cueWords_rollout_cm_all_layers": [],        
-            "cueWords_attentionNorm_cm_all_layers": [],  
-            "cueWords_attentionNormRes1_cm_all_layers": [],
-            "cueWords_attentionNormRes1Ln1_cm_all_layers": [],
-            "cueWords_valueZeroing_cm_all_layers": []
+            "model_top1_prediction": [],  # List[str]
+            "model_top1_confidence": [],  # List[float]
+
+            "attention_cm_all_layers": [],   # List[tensor(layer, seq_len i.e len of input_ids)]
+            "rollout_cm_all_layers": [],        
+            "attentionNorm_cm_all_layers": [],  
+            "attentionNormRes1_cm_all_layers": [],
+            "attentionNormRes1Ln1_cm_all_layers": [],
+            "valueZeroing_cm_all_layers": [],
+
+            "cues_tokenIdxes": [] # List[array(num_cues, 2)]
         }
 
         with torch.no_grad():
@@ -266,10 +270,11 @@ class dataset2cuesCM:
                     cms['attentionNormRes1Ln1_cm'] = normalize(torch.stack(outputs['context_mixings']['attention_norm_res_ln']).permute(1, 0, 2, 3).detach().cpu().numpy())
                 cms['valueZeroing_cm'] = normalize(torch.stack(outputs['context_mixings']['value_zeroing']).permute(1, 0, 2, 3).detach().cpu().numpy())
 
+                offset = 1 if 'gemma' in self.model_checkpoint else 0  # because gemma does not add any eos token at the end of it's tokenization
                 for cm in cms.keys():
-                    # torch.stack(cueWords_cm, dim=2) have shape => (batch_size, layer, num_cues)
-                    cueWords_cm = self._extract_cue_words_cm(cms[cm], batch_lengths, batch_cues_tokenIdxes)
-                    shuffled_data[f"cueWords_{cm}_all_layers"].extend(torch.stack(cueWords_cm, dim=2))
+                    for j in range(len(cms[cm])):
+                        shuffled_data[f"{cm}_all_layers"].append(torch.tensor(cms[cm][j,:,batch_lengths[j]-2+offset, :batch_lengths[j]]))
+                shuffled_data["cues_tokenIdxes"].extend(batch_cues_tokenIdxes)
 
         # reorder retrieved data
         inverse_idxes = np.argsort(idxes)
