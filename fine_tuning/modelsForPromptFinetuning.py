@@ -76,7 +76,7 @@ class BertForMaskedLM(BertPreTrainedModel):
 
         sequence_output = outputs[0]
 
-        # Get <mask> token representation
+        # Get [MASK] token representation
         mask_token_id = 103
         mask_pos = (input_ids == mask_token_id).nonzero(as_tuple=True)[1]
         sequence_mask_output = sequence_output[torch.arange(sequence_output.size(0)), mask_pos]

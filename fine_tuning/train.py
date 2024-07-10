@@ -43,13 +43,10 @@ class FineTuner:
     def _suitable_mask(self, examples):
         if 'roberta' in self.model_checkpoint:
             examples['masked_text'] = [text.replace('[MASK]', '<mask>') for text in examples['masked_text']]
+        return examples
 
-    def _preprocess_function(self, example):
-        mask_token = '[MASK]' if '[MASK]' in example['masked_text'] else '<mask>'
-        mask_idx = example['masked_text'].split().index(mask_token)
-        text = example['target_text'].split()
-        text[mask_idx] = mask_token
-        args = (' '.join(text),)
+    def preprocess_function(self, examples):
+        args = (examples['masked_text'],)
         result = self.tokenizer(*args, padding=False, truncation=False)
         return result
 
@@ -63,9 +60,10 @@ class FineTuner:
     def prepare_data(self):
         dataset = load_from_disk(self.dataset_path)
         dataset = dataset.map(self._suitable_mask, batched=True, batch_size=1024)
-        dataset = dataset.map(self._preprocess_function, batched=True, batched=False)
-        dataset = dataset.add_column("target_word_id", [self.target2id[example['target_word']] for example in dataset])
-        dataset = dataset.add_column("label_idx", [self.id2label[example['target_word_id']] for example in dataset])
+        dataset = dataset.map(self.preprocess_function, batched=True, batch_size=1024)
+        for split in dataset.keys():
+            dataset[split] = dataset[split].add_column("target_word_id", [self.target2id[example['target_word']] for example in dataset[split]])
+            dataset[split] = dataset[split].add_column("label_idx", [self.id2label[example['target_word_id']] for example in dataset[split]])
         dataset = dataset.filter(self._check_input_length, batched=False)
 
         collator = DataCollatorWithPadding(tokenizer=self.tokenizer)
@@ -146,7 +144,7 @@ class FineTuner:
         total_steps = len(train_loader) * self.epochs
         scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
 
-        print(f'{self.model_checkpoint} evaluation w/o fine-tuning and by just cofining the vocab:', self.evaluate(test_loader))
+        print(f'{self.model_checkpoint} evaluation w/o fine-tuning and by just confining the model vocab:', self.evaluate(test_loader))
         for epoch in range(self.epochs):
             print(f"Epoch {epoch + 1}/{self.epochs}")
             train_loss = self.train(train_loader, optimizer, scheduler)
