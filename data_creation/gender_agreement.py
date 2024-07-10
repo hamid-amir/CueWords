@@ -18,14 +18,14 @@ FEMALE_HONORIFCS = ['miss', 'ms', 'miss', 'mrs', 'mistress', 'madam', 'maam', 'd
 MALE_NONPOS_NAMES = ['man' , 'husband', 'actor', 'prince', 'waiter', 'king', 'businessman', 'sportsman', 'nobleman', 'chairman', 'assemblyman', 'committeeman', 'congressman', 'spokesman', 'batsman', 'alderman', 'anchorman', 'churchman', 'councilman', 'frontman', 'horseman']
 FEMALE_NONPOS_NAMES = ['woman', 'wife', 'actress', 'princess', 'waitress', 'queen', 'businesswoman', 'sportswoman', 'noblewoman', 'chairwoman', 'assemblywoman', 'committeewoman', 'congresswoman', 'spokeswoman', 'batswoman', 'alderwoman', 'anchorwoman', 'churchwoman', 'councilwoman', 'frontwoman', 'horsewoman']
 
-# these should become before 'of' in order to be detected as a cue
+# these should come before 'of' in order to be detected as a cue
 MALE_POS_NAMES = ['father', 'dad', 'brother', 'nephew', 'boy', 'uncle', 'son', 'grandfather', 'grandson']
 FEMALE_POS_NAMES = ['mother', 'mom', 'sister', 'niece', 'girl', 'aunt', 'daughter', 'grandmother', 'granddaughter']
 
-# we will filter any example that has at least on of these occurances
-EXCLUDES = ['also known', 'better known', 'ive jerolimov']
+# we will filter any example that has at least one of these occurances
+EXCLUDES = ['also known', 'better known', 'role as', 'role of', 'portrayal as', 'ive jerolimov']
 
-MIN_PRONOUN = 2
+MIN_PRONOUN = 1
 MAX_PRONOUN = 6
 ###############################################################
 
@@ -39,7 +39,7 @@ nlp = spacy.load("en_core_web_sm")
 
 
 # we will just keep the examples that has exactly two parts names + text starts with this name
-def name_filter(example:Dict) -> Dict:
+def name_filter(example:Dict) -> bool:
   for exclude in EXCLUDES:
     if exclude in example['target_text']:
       return False
@@ -114,23 +114,21 @@ def specify_gender(example:Dict) -> Dict:
 
 
 # we will just use texts that are either male or female + has between MIN_PRONOUN to MAX_PRONOUN pronouns
-def num_pronouns_filter(example:Dict) -> Dict:
+def num_pronouns_filter(example:Dict) -> bool:
   if example['gender'] == 'male':
-    # doc = nlp(example['target_text'])
-    # tokens = [token.text for token in doc]
-    tokens = example['target_text'].split()
-    num_pronouns = np.array([token in MALE_PRONOUNS for token in tokens]).sum()
-    if MIN_PRONOUN <= num_pronouns <= MAX_PRONOUN:
-      return True
-
-  if example['gender'] == 'female':
-    # doc = nlp(example['target_text'])
-    # tokens = [token.text for token in doc]
-    tokens = example['target_text'].split()
-    num_pronouns = np.array([token in FEMALE_PRONOUNS for token in tokens]).sum()
-    if MIN_PRONOUN <= num_pronouns <= MAX_PRONOUN:
-      return True
-
+    PRONOUNS = MALE_PRONOUNS
+  elif example['gender'] == 'female':
+      PRONOUNS = FEMALE_PRONOUNS
+  else:
+      return False
+  
+  # doc = nlp(example['target_text'])
+  # tokens = [token.text for token in doc]
+  tokens = example['target_text'].split()
+  num_pronouns = np.array([token in PRONOUNS for token in tokens]).sum()
+  if MIN_PRONOUN <= num_pronouns <= MAX_PRONOUN:
+    return True
+  
   return False
 
 
@@ -155,9 +153,9 @@ def create_dataset(example:Dict) -> Dict:
   # process the text using SpaCy
   doc = nlp(example['target_text'])
 
-  # obtain first_name using a simple heurestic
   tokens = [token.text for token in doc]
 
+  # obtain first_name and last_name using a simple heurestic
   first_name = tokens[0]
   last_name = tokens[1]
 
@@ -174,19 +172,19 @@ def create_dataset(example:Dict) -> Dict:
     elif token.text == last_name:
       all_cues.append(f'{token.text}|{start}|{end}')  
 
-    # check whether is it a honorific name
+    # check whether it is a honorific name
     elif token.text in honorifics and token.pos_ == 'PROPN':
       all_cues.append(f'{token.text}|{start}|{end}')  
 
-    # check whether is it a non_possessional name
+    # check whether it is a non_possessional name
     elif token.text in non_pos_names and token.pos_ == 'NOUN':
       all_cues.append(f'{token.text}|{start}|{end}') 
 
-    # check whether is it a possessional name
-    elif token.text in pos_names and example['target_text'][end+2:end+4] == 'of':
+    # check whether it is a possessional name
+    elif token.text in pos_names and example['target_text'][end+1:end+3] == 'of':
       all_cues.append(f'{token.text}|{start}|{end}') 
 
-    # check whether is it a pronoun
+    # check whether it is a pronoun
     elif token.text in prounouns and token.pos_ == 'PRON':
       all_cues.append(f'{token.text}|{start}|{end}') 
       
@@ -198,21 +196,40 @@ def create_dataset(example:Dict) -> Dict:
       mask_word, mask_start_idx = token, int(start)
       break
 
+  # construct a new text that has the [MASK] token in the middle instead of the the last pronoun of the target_text
   masked_text = example['target_text'][:mask_start_idx]
   masked_text += '[MASK]'
+  mask_idx = masked_text.split().index('[MASK]')
+  temp_text = example['target_text'].split()
+  temp_text[mask_idx] = '[MASK]'
+  masked_text = ' '.join(temp_text)
 
-  # cue words of the masked_text should be before the masked_word
-  masked_text_cues = []
+  # remove the cue word entry of the mask_word from the all_cues list
   for cue in all_cues:
     token, start, end = cue.split('|')
-    if int(start) < mask_start_idx:
-      masked_text_cues.append(cue)
+    if int(start) == mask_start_idx:
+      all_cues.remove(cue)
+      break
 
   example['masked_text'] = masked_text
   example['target_word'] = mask_word
-  example['cue_words'] = masked_text_cues
+  example['cue_words'] = all_cues
 
   return example
+
+
+
+
+# we will remove those examples that have any cue word after the mask position
+def mask_filter(example:Dict) -> bool:
+  all_cues = example['cue_words']
+  mask_start_idx = example['masked_text'].find('[MASK]')
+  for cue in all_cues:
+    token, start, end = cue.split('|')
+    if int(start) > mask_start_idx:
+      return False
+  
+  return True
 
 
 
@@ -220,7 +237,8 @@ def create_dataset(example:Dict) -> Dict:
 wiki_bio_dataset_filtered = wiki_bio_dataset.filter(name_filter)
 updated_dataset = wiki_bio_dataset_filtered.map(specify_gender)
 updated_dataset_filtered = updated_dataset.filter(num_pronouns_filter)
-gender_agreement_dataset = updated_dataset_filtered.map(create_dataset)
+updated_dataset_filtered = updated_dataset_filtered.map(create_dataset)
+gender_agreement_dataset = updated_dataset_filtered.filter(mask_filter)
 split_dataset = gender_agreement_dataset.train_test_split(test_size=0.4)
 
 
