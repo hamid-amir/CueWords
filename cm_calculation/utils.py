@@ -63,20 +63,24 @@ class dataset2CMs:
         return  cues_tokenIdxes
     
 
-    def _suitable_mask(self, examples):
+    def _suitable_mask(self, example):
         if 'roberta' in self.model_checkpoint:
-            examples['masked_text'] = [text.replace('[MASK]', '<mask>') for text in examples['masked_text']]
+            example['masked_text'] = example['masked_text'].replace('[MASK]', '<mask>')
         elif 'gemma' in self.model_checkpoint:
-            examples['masked_text'] = [text.replace(' [MASK]', '') for text in examples['masked_text']]
-            examples['masked_text'] = [text.replace('[MASK]', '') for text in examples['masked_text']]
-        return examples
+            mask_start_idx = example['masked_text'].find(' [MASK]')
+            if mask_start_idx == -1:
+                mask_start_idx = example['masked_text'].find('[MASK]')
+            example['masked_text'] = example['masked_text'][:mask_start_idx]
+            # examples['masked_text'] = [text.replace(' [MASK]', '') for text in examples['masked_text']]
+            # examples['masked_text'] = [text.replace('[MASK]', '') for text in examples['masked_text']]
+        return example
 
 
     def _preprocess_function_wrapped(self, tokenizer):
         def preprocess_function(examples):
             # Tokenize the texts
             args = (examples['masked_text'],)
-            result = tokenizer(*args, padding=False)
+            result = tokenizer(*args, padding=False, truncation=False)
             return result
         return preprocess_function
 
@@ -101,11 +105,10 @@ class dataset2CMs:
     #     return cue_words_cm
     
 
-    def _extract_pred_words_probs(self, predictions, batch_lengths, tokenizer):
-        offset = 1 if 'gemma' in self.model_checkpoint else 0
-        preds_idxes = [torch.topk(predictions[j, batch_lengths[j]-2+offset], 1).indices.tolist()[0] for j in range(len(predictions))]
+    def _extract_pred_words_probs(self, predictions, pos4preds, tokenizer):
+        preds_idxes = [torch.topk(predictions[j, pos4preds[j]], 1).indices.tolist()[0] for j in range(len(predictions))]
         preds_words = [tokenizer.decode([idx]) for idx in preds_idxes]
-        preds_probs = [torch.softmax(predictions, dim=0)[j, batch_lengths[j]-2+offset, idx].item() for j,idx in enumerate(preds_idxes)]
+        preds_probs = [torch.softmax(predictions, dim=0)[j, pos4preds[j], idx].item() for j, idx in enumerate(preds_idxes)]
         
         return preds_words, preds_probs
 
@@ -121,15 +124,9 @@ class dataset2CMs:
         if self.num_cues > 8:
             BATCH_SIZE = 1
 
-        # load gender_agreement dataset
-        dataset = load_from_disk(self.dataset_path)['test']
-
-        # seperate examples that has the given number of cue words
-        sel_dataset = dataset.filter(lambda example: len(example['cue_words'])==self.num_cues)
-
         # set up the model
         if "roberta" in self.model_checkpoint:
-            # first load the model with masked lm head and save it's head
+            # first load the model with masked lm head and then save it's head
             model = RobertaForMaskedLM.from_pretrained(self.model_checkpoint)
             head = model.lm_head
             del model
@@ -150,11 +147,17 @@ class dataset2CMs:
         model.eval()
         tokenizer = AutoTokenizer.from_pretrained(self.model_checkpoint, use_fast=True)
 
+        # load test split of our gender_agreement dataset
+        dataset = load_from_disk(self.dataset_path)['test']
+
+        # seperate examples that has the given number of cue words
+        sel_dataset = dataset.filter(lambda example: len(example['cue_words'])==self.num_cues)
+
         # add index of the each example in the dataset 
         sel_dataset = sel_dataset.add_column("idx", [i for i in range(len(sel_dataset))])
 
         # each model has it's own mask token
-        sel_dataset = sel_dataset.map(self._suitable_mask, batched=True, batch_size=1024)
+        sel_dataset = sel_dataset.map(self._suitable_mask, batched=False)
 
         # add tokenization output of each sample to the dataset
         sel_dataset = sel_dataset.map(self._preprocess_function_wrapped(tokenizer), batched=True, batch_size=1024)
@@ -230,7 +233,7 @@ class dataset2CMs:
             "model_top1_prediction": [],  # List[str]
             "model_top1_confidence": [],  # List[float]
 
-            "attention_cm_all_layers": [],   # List[tensor(layer, seq_len i.e len of input_ids)]
+            "attention_cm_all_layers": [],   # List[tensor(layer, seq_len i.e len of input_ids w/o any padding)]
             "rollout_cm_all_layers": [],        
             "attentionNorm_cm_all_layers": [],  
             "attentionNormRes1_cm_all_layers": [],
@@ -256,7 +259,10 @@ class dataset2CMs:
                 # predictions shape => (batch_size, max_seqLen_batch, vocab_size)
                 head = head.to(DEVICE)
                 predictions = head(outputs['last_hidden_state'])
-                preds_words, preds_probs = self._extract_pred_words_probs(predictions, batch_lengths, tokenizer)
+                if 'gemma' not in self.model_checkpoint:
+                    mask_pos = (batch['input_ids'] == tokenizer.mask_token_id).nonzero(as_tuple=True)[1]
+                pos4preds = mask_pos if 'gemma' not in self.model_checkpoint else [length - 1 for length in batch_lengths]
+                preds_words, preds_probs = self._extract_pred_words_probs(predictions, pos4preds, tokenizer)
                 shuffled_data['model_top1_prediction'].extend(preds_words)
                 shuffled_data['model_top1_confidence'].extend(preds_probs)
 
@@ -270,10 +276,9 @@ class dataset2CMs:
                     cms['attentionNormRes1Ln1_cm'] = normalize(torch.stack(outputs['context_mixings']['attention_norm_res_ln']).permute(1, 0, 2, 3).detach().cpu().numpy())
                 cms['valueZeroing_cm'] = normalize(torch.stack(outputs['context_mixings']['value_zeroing']).permute(1, 0, 2, 3).detach().cpu().numpy())
 
-                offset = 1 if 'gemma' in self.model_checkpoint else 0  # because gemma does not add any eos token at the end of it's tokenization
                 for cm in cms.keys():
                     for j in range(len(cms[cm])):
-                        shuffled_data[f"{cm}_all_layers"].append(torch.tensor(cms[cm][j,:,batch_lengths[j]-2+offset, :batch_lengths[j]]))
+                        shuffled_data[f"{cm}_all_layers"].append(torch.tensor(cms[cm][j, : , pos4preds[j] , :batch_lengths[j]]))
                 shuffled_data["cues_tokenIdxes"].extend(batch_cues_tokenIdxes)
 
         # reorder retrieved data

@@ -10,7 +10,7 @@ if not os.path.exists(OUTPUT_DIR):
 
 MODEL_CHECKPOINTS = ['roberta-base', 'google/gemma-2b', './finetuned-roberta']
 DATASET_PATHS = ['data/gender_agreement']
-MIN_NUM_CUES = 3
+MIN_NUM_CUES = 2
 MAX_NUM_CUES = 10
 ###########################################
 
@@ -27,7 +27,7 @@ for model_ckpt in MODEL_CHECKPOINTS:
       df.attrs["num_cues"] = num_cues
 
       # dump the dataframe to a pickle file
-      file_name = model_ckpt.split('/')[-1] + '_' + dataset_path.split('/')[-1].split('.')[-2] + '_' + str(num_cues) + '.pkl'
+      file_name = model_ckpt.split('/')[-1] + '_' + dataset_path.split('/')[-1] + '_' + str(num_cues) + '.pkl'
       df.to_pickle(OUTPUT_DIR + file_name)
       print(OUTPUT_DIR + file_name)
       print("="*50)
