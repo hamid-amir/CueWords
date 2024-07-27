@@ -17,9 +17,10 @@ from huggingface_hub import notebook_login
 from transformers import AutoTokenizer
 from context_mixing_toolkit.src.modeling_bert import BertModel
 from context_mixing_toolkit.src.modeling_roberta import RobertaModel
+from context_mixing_toolkit.src.modeling_gpt2 import GPT2Model
 from context_mixing_toolkit.src.modeling_gemma import GemmaModel
 from context_mixing_toolkit.src.utils import CMConfig, normalize, rollout
-from transformers import RobertaForMaskedLM, BertForMaskedLM, GemmaForCausalLM
+from transformers import RobertaForMaskedLM, BertForMaskedLM, GemmaForCausalLM, GPT2LMHeadModel
 
 
 
@@ -49,7 +50,7 @@ class dataset2CMs:
             cue, cue_start, cue_end = cue_word.split('|')
             cue_start, cue_end = int(cue_start), int(cue_end)
 
-            if 'gemma' in self.model_checkpoint:
+            if 'gemma' in self.model_checkpoint or 'gpt2' in self.model_checkpoint:
               if cue_start > 0:
                 if text[cue_start - 1] == ' ':
                   cue_start -= 1
@@ -64,9 +65,10 @@ class dataset2CMs:
     
 
     def _suitable_mask(self, example):
+        # the format is alread suitable for BERT since we used [MASK] token when constructing our dataset
         if 'roberta' in self.model_checkpoint:
             example['masked_text'] = example['masked_text'].replace('[MASK]', '<mask>')
-        elif 'gemma' in self.model_checkpoint:
+        elif 'gemma' in self.model_checkpoint or 'gpt2' in self.model_checkpoint:
             mask_start_idx = example['masked_text'].find(' [MASK]')
             if mask_start_idx == -1:
                 mask_start_idx = example['masked_text'].find('[MASK]')
@@ -88,7 +90,10 @@ class dataset2CMs:
     def _check_input_length_wrapped(self, model):
         def check_input_length(example):
             config = model.config
-            max_input_length = config.max_position_embeddings - 2
+            if 'gpt2' in self.model_checkpoint:
+                max_input_length = config.n_positions
+            else:
+                max_input_length = config.max_position_embeddings 
             if len(example['input_ids']) > max_input_length:
                 return False
             return True
@@ -136,6 +141,11 @@ class dataset2CMs:
             head = model.cls
             del model
             model = BertModel.from_pretrained(self.model_checkpoint)
+        elif "gpt2" in self.model_checkpoint:
+            model = GPT2LMHeadModel.from_pretrained(self.model_checkpoint)
+            head = GPT2LMHeadModel.lm_head
+            del model
+            model = GPT2Model.from_pretrained(self.model_checkpoint)
         elif "gemma" in self.model_checkpoint:
             model = GemmaForCausalLM.from_pretrained(self.model_checkpoint, attn_implementation='eager')
             head = model.lm_head
@@ -228,8 +238,11 @@ class dataset2CMs:
         it = iter(dataloader)
         idxes = []
 
-        # we are going to retrieve these values for the MASK token of each example
+        # we are going to retrieve these values for the target token of each example
         shuffled_data = {
+            "input_ids": [], # List[tensor(seq_len i.e len of input_ids w/o any padding)]
+            "pos4pred": [],  # List[int]
+
             "model_top1_prediction": [],  # List[str]
             "model_top1_confidence": [],  # List[float]
 
@@ -247,10 +260,15 @@ class dataset2CMs:
             for i in tqdm(range(steps), desc="Forwarding and extracting cue words context mixing scores"):
                 batch = next(it)
                 input_batch = {k: batch[k].to(DEVICE) for k in batch.keys() - ['idx', 'length', 'cues_tokenIdxes']}
-                cm_config = CMConfig(output_attention=True, output_attention_norm=True, output_value_zeroing=True)
-                if 'gemma' in self.model_checkpoint:
+                if 'roberta' in self.model_checkpoint or 'bert' in self.model_checkpoint:
+                    is_encoder = True
+                    cm_config = CMConfig(output_attention=True, output_attention_norm=True, output_value_zeroing=True)
+                elif 'gpt2' in self.model_checkpoint or 'gemma' in self.model_checkpoint:
+                    is_encoder = False
                     cm_config = CMConfig(output_attention=True, output_value_zeroing=True)
                 outputs = model(**input_batch, output_context_mixings=cm_config)
+
+                shuffled_data['input_ids'].extend(batch['input_ids'])
 
                 idxes.extend(batch['idx'].tolist())
                 batch_lengths = batch["length"].numpy()
@@ -259,9 +277,10 @@ class dataset2CMs:
                 # predictions shape => (batch_size, max_seqLen_batch, vocab_size)
                 head = head.to(DEVICE)
                 predictions = head(outputs['last_hidden_state'])
-                if 'gemma' not in self.model_checkpoint:
+                if is_encoder:
                     mask_pos = (batch['input_ids'] == tokenizer.mask_token_id).nonzero(as_tuple=True)[1]
-                pos4preds = mask_pos if 'gemma' not in self.model_checkpoint else [length - 1 for length in batch_lengths]
+                pos4preds = mask_pos if is_encoder else [length - 1 for length in batch_lengths]
+                shuffled_data['pos4pred'].extend(pos4preds)
                 preds_words, preds_probs = self._extract_pred_words_probs(predictions, pos4preds, tokenizer)
                 shuffled_data['model_top1_prediction'].extend(preds_words)
                 shuffled_data['model_top1_confidence'].extend(preds_probs)
@@ -270,7 +289,7 @@ class dataset2CMs:
                 cms = {}
                 cms['attention_cm'] = torch.stack(outputs['context_mixings']['attention']).permute(1, 0, 2, 3).detach().cpu().numpy()
                 cms['rollout_cm'] = np.array([rollout(cms['attention_cm'][j], res=True) for j in range(len(cms['attention_cm']))])
-                if 'gemma' not in self.model_checkpoint:
+                if is_encoder:
                     cms['attentionNorm_cm'] = normalize(torch.stack(outputs['context_mixings']['attention_norm']).permute(1, 0, 2, 3).detach().cpu().numpy())
                     cms['attentionNormRes1_cm'] = normalize(torch.stack(outputs['context_mixings']['attention_norm_res']).permute(1, 0, 2, 3).detach().cpu().numpy())
                     cms['attentionNormRes1Ln1_cm'] = normalize(torch.stack(outputs['context_mixings']['attention_norm_res_ln']).permute(1, 0, 2, 3).detach().cpu().numpy())

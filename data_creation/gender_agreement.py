@@ -15,12 +15,12 @@ MALE_HONORIFCS = ['master', 'mister', 'mr', 'sir', 'sire', 'gentleman', 'lord', 
 FEMALE_HONORIFCS = ['miss', 'ms', 'miss', 'mrs', 'mistress', 'madam', 'maam', 'dame']
 
 # these should be NOUN in order to be detected as a cue
-MALE_NONPOS_NAMES = ['man' , 'husband', 'actor', 'prince', 'waiter', 'king', 'businessman', 'sportsman', 'nobleman', 'chairman', 'assemblyman', 'committeeman', 'congressman', 'spokesman', 'batsman', 'alderman', 'anchorman', 'churchman', 'councilman', 'frontman', 'horseman']
-FEMALE_NONPOS_NAMES = ['woman', 'wife', 'actress', 'princess', 'waitress', 'queen', 'businesswoman', 'sportswoman', 'noblewoman', 'chairwoman', 'assemblywoman', 'committeewoman', 'congresswoman', 'spokeswoman', 'batswoman', 'alderwoman', 'anchorwoman', 'churchwoman', 'councilwoman', 'frontwoman', 'horsewoman']
+MALE_NONPOS_NAMES = ['man' , 'actor', 'prince', 'waiter', 'king', 'businessman', 'sportsman', 'nobleman', 'chairman', 'assemblyman', 'committeeman', 'congressman', 'spokesman', 'batsman', 'alderman', 'anchorman', 'churchman', 'councilman', 'frontman', 'horseman']
+FEMALE_NONPOS_NAMES = ['woman', 'actress', 'princess', 'waitress', 'queen', 'businesswoman', 'sportswoman', 'noblewoman', 'chairwoman', 'assemblywoman', 'committeewoman', 'congresswoman', 'spokeswoman', 'batswoman', 'alderwoman', 'anchorwoman', 'churchwoman', 'councilwoman', 'frontwoman', 'horsewoman']
 
 # these should come before 'of' in order to be detected as a cue
-MALE_POS_NAMES = ['father', 'dad', 'brother', 'nephew', 'boy', 'uncle', 'son', 'grandfather', 'grandson']
-FEMALE_POS_NAMES = ['mother', 'mom', 'sister', 'niece', 'girl', 'aunt', 'daughter', 'grandmother', 'granddaughter']
+MALE_POS_NAMES = ['father', 'dad', 'husband', 'brother', 'nephew', 'boy', 'uncle', 'son', 'grandfather', 'grandson']
+FEMALE_POS_NAMES = ['mother', 'mom', 'wife', 'sister', 'niece', 'girl', 'aunt', 'daughter', 'grandmother', 'granddaughter']
 
 # we will filter any example that has at least one of these occurances
 EXCLUDES = ['also known', 'better known', 'role as', 'role of', 'portrayal as', 'ive jerolimov']

@@ -1,11 +1,11 @@
-play.ipynb
-questions.txt
-en_core_web_sm-3.7.1
 .env
-results
 .ipynb_checkpoints
-context_mixing_toolkit
 __pycache__
+data
+results
+en_core_web_sm-3.7.1
+questions.txt
+context_mixing_toolkit
 finetuned-roberta
 finetuned-bert
-data
+finetuned-gpt2

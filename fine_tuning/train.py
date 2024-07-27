@@ -1,11 +1,11 @@
 import torch
 from torch.utils.data import DataLoader
-from transformers import RobertaTokenizer, BertTokenizer, AdamW, get_linear_schedule_with_warmup
+from transformers import RobertaTokenizer, BertTokenizer, AdamW, get_linear_schedule_with_warmup, AutoTokenizer
 from transformers import DataCollatorWithPadding
 from transformers import AutoConfig
 from datasets import load_from_disk
 from tqdm import tqdm
-from modelsForPromptFinetuning import RobertaForMaskedLM, BertForMaskedLM
+from modelsForPromptFinetuning import RobertaForMaskedLM, BertForMaskedLM, GPT2LMHeadModel
 
 
 
@@ -26,12 +26,13 @@ class FineTuner:
     def _setup_model_and_tokenizer(self):
         config = AutoConfig.from_pretrained(self.model_checkpoint)
         
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_checkpoint)
         if 'roberta' in self.model_checkpoint:
-            self.tokenizer = RobertaTokenizer.from_pretrained(self.model_checkpoint)
             self.model = RobertaForMaskedLM.from_pretrained(self.model_checkpoint, config=config)
         elif 'bert' in self.model_checkpoint:
-            self.tokenizer = BertTokenizer.from_pretrained(self.model_checkpoint)
             self.model = BertForMaskedLM.from_pretrained(self.model_checkpoint, config=config)
+        elif 'gpt2' in self.model_checkpoint:
+            self.model = GPT2LMHeadModel.from_pretrained(self.model_checkpoint, config=config)
         else:
             raise NotImplementedError(f"{self.model_checkpoint} not implemented!")
         
@@ -40,11 +41,17 @@ class FineTuner:
         self.model.label_word_list = list(self.target2id.values())
         self.model.to(self.device)
 
-    def _suitable_mask(self, examples):
+    def _suitable_mask(self, example):
+        # the format is alread suitable for BERT since we used [MASK] token when constructing our dataset
         if 'roberta' in self.model_checkpoint:
-            examples['masked_text'] = [text.replace('[MASK]', '<mask>') for text in examples['masked_text']]
-        return examples
-
+            example['masked_text'] = example['masked_text'].replace('[MASK]', '<mask>')
+        elif 'gpt2' in self.model_checkpoint:
+            mask_start_idx = example['masked_text'].find(' [MASK]')
+            if mask_start_idx == -1:
+                mask_start_idx = example['masked_text'].find('[MASK]')
+            example['masked_text'] = example['masked_text'][:mask_start_idx]
+        return example
+    
     def preprocess_function(self, examples):
         args = (examples['masked_text'],)
         result = self.tokenizer(*args, padding=False, truncation=False)
@@ -52,14 +59,17 @@ class FineTuner:
 
     def _check_input_length(self, example):
         config = self.model.config
-        max_input_length = config.max_position_embeddings - 2
+        if 'gpt2' in self.model_checkpoint:
+            max_input_length = config.n_positions
+        else:
+            max_input_length = config.max_position_embeddings 
         if len(example['input_ids']) > max_input_length:
             return False
         return True
 
     def prepare_data(self):
         dataset = load_from_disk(self.dataset_path)
-        dataset = dataset.map(self._suitable_mask, batched=True, batch_size=1024)
+        dataset = dataset.map(self._suitable_mask, batched=False)
         dataset = dataset.map(self.preprocess_function, batched=True, batch_size=1024)
         for split in dataset.keys():
             dataset[split] = dataset[split].add_column("target_word_id", [self.target2id[example['target_word']] for example in dataset[split]])
@@ -133,7 +143,7 @@ class FineTuner:
         try:
             self.model.save_pretrained(f"./finetuned-{self.model_checkpoint.split('-')[0]}")
             self.tokenizer.save_pretrained(f"./finetuned-{self.model_checkpoint.split('-')[0]}")
-            print(f'{self.model_checkpoint} fine-tuning on the gender_agreement dataset was saved successfully!')
+            print(f'{self.model_checkpoint} fine-tuned model on the gender_agreement dataset was saved successfully!')
         except Exception as e:
             print(f'An error occurred while saving the fine-tuned model: {e}')
 
@@ -160,4 +170,7 @@ if __name__ == "__main__":
     finetuner.run()
 
     # finetuner = FineTuner('bert-base-uncased', 'data/gender_agreement')
+    # finetuner.run()
+
+    # finetuner = FineTuner('gpt2', 'data/gender_agreement')
     # finetuner.run()
