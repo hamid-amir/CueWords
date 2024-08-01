@@ -1,10 +1,11 @@
 import torch
 from torch.utils.data import DataLoader
-from transformers import RobertaTokenizer, BertTokenizer, AdamW, get_linear_schedule_with_warmup, AutoTokenizer
+from transformers import AdamW, get_linear_schedule_with_warmup, AutoTokenizer
 from transformers import DataCollatorWithPadding
 from transformers import AutoConfig
 from datasets import load_from_disk
 from tqdm import tqdm
+import argparse
 from modelsForPromptFinetuning import RobertaForMaskedLM, BertForMaskedLM, GPT2LMHeadModel
 
 
@@ -13,7 +14,7 @@ class FineTuner:
     MALE_PRONOUNS = ['he', 'his', 'him', 'himself']
     FEMALE_PRONOUNS = ['she', 'her', 'hers', 'herself']
 
-    def __init__(self, model_checkpoint, dataset_path, batch_size=8, epochs=2, learning_rate=5e-5):
+    def __init__(self, model_checkpoint, dataset_path, batch_size=1, epochs=2, learning_rate=5e-5):
         self.model_checkpoint = model_checkpoint
         self.dataset_path = dataset_path
         self.batch_size = batch_size
@@ -27,6 +28,10 @@ class FineTuner:
         config = AutoConfig.from_pretrained(self.model_checkpoint)
         
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_checkpoint)
+        # Add a padding token if it's not defined
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+
         if 'roberta' in self.model_checkpoint:
             self.model = RobertaForMaskedLM.from_pretrained(self.model_checkpoint, config=config)
         elif 'bert' in self.model_checkpoint:
@@ -36,7 +41,8 @@ class FineTuner:
         else:
             raise NotImplementedError(f"{self.model_checkpoint} not implemented!")
         
-        self.target2id = {token: self.tokenizer.encode(' ' + token)[1] for token in self.MALE_PRONOUNS + self.FEMALE_PRONOUNS}
+        t_id = 0 if 'gpt2' in self.model_checkpoint else 1
+        self.target2id = {token: self.tokenizer.encode(' ' + token)[t_id] for token in self.MALE_PRONOUNS + self.FEMALE_PRONOUNS}
         self.id2label = {token_id: i for i, token_id in enumerate(self.target2id.values())}
         self.model.label_word_list = list(self.target2id.values())
         self.model.to(self.device)
@@ -164,13 +170,22 @@ class FineTuner:
         self._save_model()
 
 
-
 if __name__ == "__main__":
-    finetuner = FineTuner('roberta-base', 'data/gender_agreement')
+    parser = argparse.ArgumentParser(description="Fine-tune a language model with specified parameters.")
+    parser.add_argument("model_type", choices=["roberta", "bert", "gpt2"], help="The type of model to fine-tune.")
+    parser.add_argument("--dataset_path", type=str, default="data/gender_agreement", help="Path to the dataset.")
+    parser.add_argument("--epochs", type=int, default=2, help="Number of training epochs.")
+    parser.add_argument("--learning_rate", type=float, default=5e-5, help="Learning rate for the optimizer.")
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training.")
+
+    args = parser.parse_args()
+
+    if args.model_type == 'roberta':
+        model_ckpt = 'roberta-base'
+    elif args.model_type == 'bert':
+        model_ckpt = 'bert-base-uncased'
+    elif args.model_type == 'gpt2':
+        model_ckpt = 'gpt2'
+
+    finetuner = FineTuner(model_ckpt, args.dataset_path, args.batch_size, args.epochs, args.learning_rate)
     finetuner.run()
-
-    # finetuner = FineTuner('bert-base-uncased', 'data/gender_agreement')
-    # finetuner.run()
-
-    # finetuner = FineTuner('gpt2', 'data/gender_agreement')
-    # finetuner.run()

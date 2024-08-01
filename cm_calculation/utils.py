@@ -12,7 +12,7 @@ import torch
 from typing import List, Tuple
 from transformers.trainer_pt_utils import LengthGroupedSampler
 from torch.utils.data import DataLoader
-from transformers import DataCollatorWithPadding
+from transformers import DataCollatorWithPadding, DataCollatorForLanguageModeling
 from huggingface_hub import notebook_login
 from transformers import AutoTokenizer
 from context_mixing_toolkit.src.modeling_bert import BertModel
@@ -125,9 +125,9 @@ class dataset2CMs:
         various interpretability methods.
         """
         DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-        BATCH_SIZE = 2
-        if self.num_cues > 8:
-            BATCH_SIZE = 1
+        BATCH_SIZE = 1
+        # if self.num_cues > 8:
+        #     BATCH_SIZE = 1
 
         # set up the model
         if "roberta" in self.model_checkpoint:
@@ -143,7 +143,7 @@ class dataset2CMs:
             model = BertModel.from_pretrained(self.model_checkpoint)
         elif "gpt2" in self.model_checkpoint:
             model = GPT2LMHeadModel.from_pretrained(self.model_checkpoint)
-            head = GPT2LMHeadModel.lm_head
+            head = model.lm_head
             del model
             model = GPT2Model.from_pretrained(self.model_checkpoint)
         elif "gemma" in self.model_checkpoint:
@@ -156,6 +156,9 @@ class dataset2CMs:
 
         model.eval()
         tokenizer = AutoTokenizer.from_pretrained(self.model_checkpoint, use_fast=True)
+        # Add a padding token if it's not defined
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
 
         # load test split of our gender_agreement dataset
         dataset = load_from_disk(self.dataset_path)['test']
@@ -174,6 +177,8 @@ class dataset2CMs:
 
         # ensure that each example is shorter than the model max input length
         sel_dataset = sel_dataset.filter(self._check_input_length_wrapped(model), batched=False)
+
+        # sel_dataset = sel_dataset.select(range(20))
 
         dataset_size = len(sel_dataset)
         steps = int(np.ceil(dataset_size / BATCH_SIZE))
@@ -279,8 +284,8 @@ class dataset2CMs:
                 predictions = head(outputs['last_hidden_state'])
                 if is_encoder:
                     mask_pos = (batch['input_ids'] == tokenizer.mask_token_id).nonzero(as_tuple=True)[1]
-                pos4preds = mask_pos if is_encoder else [length - 1 for length in batch_lengths]
-                shuffled_data['pos4pred'].extend(pos4preds)
+                pos4preds = mask_pos if is_encoder else torch.tensor([length - 1 for length in batch_lengths])
+                shuffled_data['pos4pred'].extend(pos4preds.tolist())
                 preds_words, preds_probs = self._extract_pred_words_probs(predictions, pos4preds, tokenizer)
                 shuffled_data['model_top1_prediction'].extend(preds_words)
                 shuffled_data['model_top1_confidence'].extend(preds_probs)
