@@ -1,5 +1,6 @@
 import numpy as np
 import spacy
+import re
 from datasets import load_dataset
 import os
 from typing import Dict
@@ -24,6 +25,9 @@ FEMALE_POS_NAMES = ['mother', 'mom', 'wife', 'sister', 'niece', 'girl', 'aunt', 
 
 # we will filter any example that has at least one of these occurances
 EXCLUDES = ['also known', 'better known', 'role as', 'role of', 'portrayal as', 'ive jerolimov']
+
+# useful regex pattern to exclude texts between -lrb and -rrb
+PATTERN = r"\s*-lrb-.*?-rrb-\s*"
 
 MIN_PRONOUN = 1
 MAX_PRONOUN = 6
@@ -95,6 +99,11 @@ def name_filter(example:Dict) -> bool:
 def specify_gender(example:Dict) -> Dict:
 #   doc = nlp(example['target_text'])
 #   tokens = [token.text for token in doc]
+
+  # remove texts between -lrb and -rrb
+  example['target_text'] = re.sub(PATTERN, " ", example['target_text'])  
+  example['target_text'] = re.sub(r'\s+', ' ', example['target_text']).strip()
+  
   tokens = example['target_text'].split()
     
   if any(elem in tokens for elem in MALE_PRONOUNS) and any(elem in tokens for elem in FEMALE_PRONOUNS):
@@ -159,6 +168,8 @@ def create_dataset(example:Dict) -> Dict:
   first_name = tokens[0]
   last_name = tokens[1]
 
+  cues_pattern = ''
+
   # iterate over all tokens of the text and check for possible cues
   for token in doc:
     # first get the span of this token in the text
@@ -167,26 +178,32 @@ def create_dataset(example:Dict) -> Dict:
     # check whether it is a first_name
     if token.text == first_name:
       all_cues.append(f'{token.text}|{start}|{end}')  
+      cues_pattern += 'F'
 
     # check whether it is a last_name
     elif token.text == last_name:
       all_cues.append(f'{token.text}|{start}|{end}')  
+      cues_pattern += 'L'
 
     # check whether it is a honorific name
     elif token.text in honorifics and token.pos_ == 'PROPN':
       all_cues.append(f'{token.text}|{start}|{end}')  
+      cues_pattern += 'O'
 
     # check whether it is a non_possessional name
     elif token.text in non_pos_names and token.pos_ == 'NOUN':
       all_cues.append(f'{token.text}|{start}|{end}') 
+      cues_pattern += 'O'
 
     # check whether it is a possessional name
     elif token.text in pos_names and example['target_text'][end+1:end+3] == 'of':
       all_cues.append(f'{token.text}|{start}|{end}') 
+      cues_pattern += 'O'
 
     # check whether it is a pronoun
     elif token.text in prounouns and token.pos_ == 'PRON':
       all_cues.append(f'{token.text}|{start}|{end}') 
+      cues_pattern += 'P'
       
 
   # find the last pronoun of the text and mask it
@@ -214,6 +231,7 @@ def create_dataset(example:Dict) -> Dict:
   example['masked_text'] = masked_text
   example['target_word'] = mask_word
   example['cue_words'] = all_cues
+  example['cues_pattern'] = cues_pattern[:-1]
 
   return example
 
@@ -233,6 +251,19 @@ def mask_filter(example:Dict) -> bool:
 
 
 
+# find the balance size of the dataset 
+def make_balance(examples):
+  min_cues = 2
+  max_cues = 6
+  lenghts = {f'{i}':0 for i in range(min_cues, max_cues+1)}
+  for cues_list in examples['cue_words']:
+    if min_cues <= len(cues_list) <= max_cues:
+      lenghts[str(len(cues_list))] += 1
+
+  balance_size = min(lenghts.values())
+
+  return {'balance_size':[balance_size]*len(examples['cue_words'])}
+
 
 wiki_bio_dataset_filtered = wiki_bio_dataset.filter(name_filter)
 updated_dataset = wiki_bio_dataset_filtered.map(specify_gender)
@@ -240,6 +271,9 @@ updated_dataset_filtered = updated_dataset.filter(num_pronouns_filter)
 updated_dataset_filtered = updated_dataset_filtered.map(create_dataset)
 gender_agreement_dataset = updated_dataset_filtered.filter(mask_filter)
 split_dataset = gender_agreement_dataset.train_test_split(test_size=0.4)
+
+split_dataset['train'] = split_dataset['train'].map(make_balance, batched=True, batch_size=len(split_dataset['train']))
+split_dataset['test'] = split_dataset['test'].map(make_balance, batched=True, batch_size=len(split_dataset['train']))
 
 
 # save the resulting dataset to the disk
