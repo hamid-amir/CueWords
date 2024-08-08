@@ -166,9 +166,6 @@ class dataset2CMs:
         # seperate examples that has the given number of cue words
         sel_dataset = dataset.filter(lambda example: len(example['cue_words'])==self.num_cues)
 
-        # add index of the each example in the dataset 
-        sel_dataset = sel_dataset.add_column("idx", [i for i in range(len(sel_dataset))])
-
         # each model has it's own mask token
         sel_dataset = sel_dataset.map(self._suitable_mask, batched=False)
 
@@ -178,7 +175,8 @@ class dataset2CMs:
         # ensure that each example is shorter than the model max input length
         sel_dataset = sel_dataset.filter(self._check_input_length_wrapped(model), batched=False)
 
-        # sel_dataset = sel_dataset.select(range(20))
+        # add index of the each example in the dataset 
+        sel_dataset = sel_dataset.add_column("idx", [i for i in range(len(sel_dataset))])
 
         dataset_size = len(sel_dataset)
         steps = int(np.ceil(dataset_size / BATCH_SIZE))

@@ -4,7 +4,7 @@ import os
 
 
 ################# configs ################
-OUTPUT_DIR = "results/"
+OUTPUT_DIR = "results_cm/"
 if not os.path.exists(OUTPUT_DIR):
   os.makedirs(OUTPUT_DIR)
 
