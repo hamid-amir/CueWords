@@ -2,7 +2,9 @@
 .ipynb_checkpoints
 __pycache__
 data
-results
+results_cm
+results_vp
+figs
 en_core_web_sm-3.7.1
 questions.txt
 context_mixing_toolkit
