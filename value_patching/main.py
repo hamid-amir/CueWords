@@ -9,7 +9,7 @@ if not os.path.exists(OUTPUT_DIR):
   os.makedirs(OUTPUT_DIR)
 
 # MODEL_CHECKPOINTS = ['roberta-base', './finetuned-roberta', 'bert-base-uncased', './finetuned-bert', 'gpt2', './finetuned-gpt2', 'google/gemma-2b']
-MODEL_CHECKPOINTS = ['bert-base-uncased']
+MODEL_CHECKPOINTS = ['gpt2']
 DATASET_PATHS = ['data/gender_agreement']
 MIN_NUM_CUES = 2
 MAX_NUM_CUES = 6

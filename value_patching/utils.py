@@ -2,6 +2,7 @@
 
 from modeling_roberta_forVP import RobertaForMaskedLM
 from modeling_bert_forVP import BertForMaskedLM
+from modeling_gpt2_forVP import GPT2LMHeadModel
 from transformers import AutoTokenizer
 import torch
 from tqdm import tqdm
@@ -145,34 +146,25 @@ class dataset2VPs:
     def _get_corrupt_name(self, gender, cue_id, firstName):
         num_tokens = cue_id[1] - cue_id[0]
         if firstName:
-            # if 'roberta' in self.model_checkpoint:
                 if num_tokens == 1:
                     male_replace_name, female_replace_name = ' bob', ' amy'
-                    male_replace_id, female_replace_id = self.tokenizer.encode(male_replace_name)[1:2], self.tokenizer.encode(female_replace_name)[1:2]
+                    male_replace_id = self.tokenizer.encode(male_replace_name, add_special_tokens=False)
+                    female_replace_id = self.tokenizer.encode(female_replace_name, add_special_tokens=False)
                     return female_replace_id if gender == 'male' else male_replace_id
                 elif num_tokens == 2:
                     male_replace_name, female_replace_name = ' aron', ' noora'
-                    male_replace_id, female_replace_id = self.tokenizer.encode(male_replace_name)[1:3], self.tokenizer.encode(female_replace_name)[1:3]
+                    male_replace_id = self.tokenizer.encode(male_replace_name, add_special_tokens=False)
+                    female_replace_id = self.tokenizer.encode(female_replace_name, add_special_tokens=False)
                     return female_replace_id if gender == 'male' else male_replace_id
-                
-            # elif 'bert' in self.model_checkpoint:
-            #     if num_tokens == 1:
-            #         male_replace_name, female_replace_name = ' bob', ' amy'
-            #         male_replace_id, female_replace_id = self.tokenizer.encode(male_replace_name)[1:2], self.tokenizer.encode(female_replace_name)[1:2]
-            #         return female_replace_id if gender == 'male' else male_replace_id
-            #     elif num_tokens == 2:
-            #         male_replace_name, female_replace_name = 'aron', 'noora'
-            #         male_replace_id, female_replace_id = self.tokenizer.encode(male_replace_name)[1:3], self.tokenizer.encode(female_replace_name)[1:3]
-            #         return female_replace_id if gender == 'male' else male_replace_id
         
         else:
             if num_tokens == 1:
                 replace_name = 'walker'
-                replace_id = self.tokenizer.encode(replace_name)[1:2]
+                replace_id = self.tokenizer.encode(replace_name, add_special_tokens=False)
                 return replace_id
             elif num_tokens == 2:
                 replace_name = ' willinsky'
-                replace_id = self.tokenizer.encode(replace_name)[1:3]
+                replace_id = self.tokenizer.encode(replace_name, add_special_tokens=False)
                 return replace_id           
 
 
@@ -200,16 +192,16 @@ class dataset2VPs:
                 cue_words_corrupt_tokenIdxes.append(self._get_corrupt_name(example['gender'], cue_tokenId, firstName=False))
             elif cue in pronouns:
                 idx = pronouns.index(cue)
-                cue_words_corrupt_tokenIdxes.append(self.tokenizer.encode(' ' + opposite_pronouns[idx])[1:-1])
+                cue_words_corrupt_tokenIdxes.append(self.tokenizer.encode(' ' + opposite_pronouns[idx], add_special_tokens=False))
             elif cue in honorifics:
                 idx = honorifics.index(cue)
-                cue_words_corrupt_tokenIdxes.append(self.tokenizer.encode(' ' + opposite_honorifics[idx])[1:-1])
+                cue_words_corrupt_tokenIdxes.append(self.tokenizer.encode(' ' + opposite_honorifics[idx], add_special_tokens=False))
             elif cue in nonpos_names:
                 idx = nonpos_names.index(cue)
-                cue_words_corrupt_tokenIdxes.append(self.tokenizer.encode(' ' + opposite_nonpos_names[idx])[1:-1])
+                cue_words_corrupt_tokenIdxes.append(self.tokenizer.encode(' ' + opposite_nonpos_names[idx], add_special_tokens=False))
             elif cue in pos_names:
                 idx = pos_names.index(cue)
-                cue_words_corrupt_tokenIdxes.append(self.tokenizer.encode(' ' + opposite_pos_names[idx])[1:-1])
+                cue_words_corrupt_tokenIdxes.append(self.tokenizer.encode(' ' + opposite_pos_names[idx], add_special_tokens=False))
 
         example['input_ids_corrupt'] = example['input_ids'].copy()
         for i, cues_tokenId in enumerate(example['cues_tokenIdxes']):
@@ -249,7 +241,7 @@ class dataset2VPs:
 
 
 
-    def retrieveVP(self, find_final_size=False) -> pd.DataFrame:
+    def retrieveVP(self) -> pd.DataFrame:
         """
         Main function that retrievs activation patching results for the cue words.
         """
@@ -262,8 +254,8 @@ class dataset2VPs:
             model = RobertaForMaskedLM.from_pretrained(self.model_checkpoint)
         elif "bert" in self.model_checkpoint:
             model = BertForMaskedLM.from_pretrained(self.model_checkpoint)
-        # elif "gpt2" in self.model_checkpoint:
-        #     model = GPT2LMHeadModel.from_pretrained(self.model_checkpoint)
+        elif "gpt2" in self.model_checkpoint:
+            model = GPT2LMHeadModel.from_pretrained(self.model_checkpoint)
         # elif "gemma" in self.model_checkpoint:
         #     model = GemmaForCausalLM.from_pretrained(self.model_checkpoint, attn_implementation='eager')
         else:
@@ -374,7 +366,7 @@ class dataset2VPs:
             "model_top1_corrupt_prediction": [],  # List[str]
             "model_top1_corrupt_confidence": [],  # List[float]
 
-            "ap_all_layersAndPos": [],   # List[tensor(layer, seq_len i.e len of input_ids w/o any padding)]
+            "vp_all_layersAndPos": [],   # List[tensor(layer, seq_len i.e len of input_ids w/o any padding)]
 
             "cues_tokenIdxes": [] # List[array(num_cues, 2)]
         }
@@ -384,6 +376,14 @@ class dataset2VPs:
                 batch = next(it)
                 if 'roberta' in self.model_checkpoint or 'bert' in self.model_checkpoint:
                     is_encoder = True
+                elif 'gpt2' in self.model_checkpoint or 'gemma' in self.model_checkpoint:
+                    is_encoder = False
+
+                if batch['input_ids_corrupt'].shape[1] != batch['attention_mask'].shape[1]:
+                    idxes.extend(batch['idx'].tolist())
+                    for entry in shuffled_data.keys():
+                        shuffled_data[entry].extend([None])
+                    continue
 
                 batch_lengths = batch["length"].numpy()
                 if is_encoder:
@@ -395,13 +395,13 @@ class dataset2VPs:
                 target_token = sel_dataset[batch['idx'].tolist()[0]]['target_word']
                 target_tokens_pool = [target_token, ' ' + target_token, target_token.capitalize(), ' ' + target_token.capitalize()]
                 target_tokens_pool = target_tokens_pool[2:] if target_token in ['him', 'himself', 'hers', 'herself'] else target_tokens_pool
-                target_token_ids_pool = [self.tokenizer.encode(token)[1] for token in target_tokens_pool]
+                target_token_ids_pool = [self.tokenizer.encode(token, add_special_tokens=False)[0] for token in target_tokens_pool]
 
                 # clean run without patching
                 input_batch_clean = {k: batch[k].to(DEVICE) for k in batch.keys() - ['input_ids_corrupt', 'idx', 'length', 'cues_tokenIdxes']}
                 outputs_clean = model(**input_batch_clean, return_dict=False)
-                logit_target_clean_pool = outputs_clean[0][0, pos4preds[0], target_token_ids_pool]
-                logit_target_clean, index = torch.max(logit_target_clean_pool, dim=-1)
+                prob_target_clean_pool = torch.softmax(outputs_clean[0][0, pos4preds[0], :], dim=-1)[target_token_ids_pool]
+                prob_target_clean, index = torch.max(prob_target_clean_pool, dim=-1)
                 target_token_id = target_token_ids_pool[index]
                 predictions = outputs_clean[0]
                 preds_words, preds_probs = self._extract_pred_words_probs(predictions, pos4preds)
@@ -414,14 +414,13 @@ class dataset2VPs:
                 input_batch_corrupt['input_ids'] = input_batch_corrupt['input_ids_corrupt'].clone()
                 del input_batch_corrupt['input_ids_corrupt']
                 outputs_corrupt = model(**input_batch_corrupt, return_dict=False, output_value_vectors=True)
-                logit_target_corrupt = outputs_corrupt[0][0, pos4preds[0], target_token_id]
                 predictions = outputs_corrupt[0]
                 preds_words, preds_probs = self._extract_pred_words_probs(predictions, pos4preds) 
                 shuffled_data['model_top1_corrupt_prediction'].extend(preds_words)
                 shuffled_data['model_top1_corrupt_confidence'].extend(preds_probs)
                 shuffled_data['input_ids_corrupt'].extend(batch['input_ids_corrupt'])
 
-                # clean run with value patching : we measure how much patching each token would decrease the target token logit
+                # clean run with value patching : we measure how much patching each token would decrease the target token prob
                 num_positions = len(batch['input_ids'][0])
                 patching_result = torch.zeros((BATCH_SIZE, model.config.num_hidden_layers, num_positions))
                 for layer_to_patch in range(model.config.num_hidden_layers):
@@ -432,10 +431,10 @@ class dataset2VPs:
                                                         patch_value_layer=layer_to_patch, 
                                                         patch_value_position=[position_to_patch, position_to_patch+1])
                         
-                        logit_target_clean_patched = outputs_clean_patched[0][0, pos4preds[0], target_token_id]
-                        patching_result[0, layer_to_patch, position_to_patch] = (logit_target_clean_patched - logit_target_clean) / (logit_target_corrupt - logit_target_clean)
+                        prob_target_clean_patched = torch.softmax(outputs_clean_patched[0][0, pos4preds[0], :], dim=-1)[target_token_id]
+                        patching_result[0, layer_to_patch, position_to_patch] = (prob_target_clean - prob_target_clean_patched).item()
 
-                shuffled_data['ap_all_layersAndPos'].extend(patching_result)
+                shuffled_data['vp_all_layersAndPos'].extend(patching_result)
 
                 batch_cues_tokenIdxes = batch['cues_tokenIdxes'].numpy()
                 shuffled_data["cues_tokenIdxes"].extend(batch_cues_tokenIdxes)
@@ -444,7 +443,7 @@ class dataset2VPs:
         # reorder retrieved data
         inverse_idxes = np.argsort(idxes)
         for key in shuffled_data.keys():
-            if len(shuffled_data[key]) == 0:
+            if not shuffled_data[key]:
                 shuffled_data[key] = [None for _ in range(dataset_size)]
             final_data[key] = [shuffled_data[key][inverse_idxes[i]] for i in range(dataset_size)]
             
