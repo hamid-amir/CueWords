@@ -11,7 +11,7 @@ if not os.path.exists(OUTPUT_DIR):
 MODEL_CHECKPOINTS = ['roberta-base', './finetuned-roberta', 'bert-base-uncased', './finetuned-bert', 'gpt2', './finetuned-gpt2', 'google/gemma-2b']
 DATASET_PATHS = ['data/gender_agreement']
 MIN_NUM_CUES = 2
-MAX_NUM_CUES = 10
+MAX_NUM_CUES = 6
 ###########################################
 
 for model_ckpt in MODEL_CHECKPOINTS:

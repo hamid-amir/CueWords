@@ -100,14 +100,31 @@ class dataset2CMs:
         return check_input_length
 
 
-    # def _extract_cue_words_cm(self, cm, batch_lengths, batch_cues_tokenIdxes):
-    #     cue_words_cm = []
-    #     offset = 1 if 'gemma' in self.model_checkpoint else 0
-    #     for c in range(self.num_cues):
-    #         cue_tokens_cm = [cm[j][:, batch_lengths[j]-2+offset, batch_cues_tokenIdxes[j,c,0]: batch_cues_tokenIdxes[j,c,1]] for j in range(len(cm))]
-    #         cue_word_cm = np.array([np.max(cue_token_cm, axis=1) for cue_token_cm in cue_tokens_cm])
-    #         cue_words_cm.append(torch.tensor(cue_word_cm))
-    #     return cue_words_cm
+    def _excludeForCorrupt(self, example):
+        # idxes_to_check = []
+        # first_name, last_name = example['masked_text'].split()[:2]      
+        # for i, cue_word in enumerate(example['cue_words']):
+        #     cue, cue_start, cue_end = cue_word.split('|')
+        #     if cue == first_name or cue == last_name:
+        #         idxes_to_check.append(i)
+        
+        # max_allow = 2 if 'roberta' in self.model_checkpoint else 1 
+        max_allow = 2
+        for i in range(len(example['cues_pattern'])):
+            if example['cues_pattern'][i] in ['F', 'L']:
+                if example['cues_tokenIdxes'][i][1] - example['cues_tokenIdxes'][i][0] > max_allow:
+                    # print(example)
+                    # print("#"*100)
+                    return False
+        
+        inconsistant_num_tokens = ['businessman', 'businesswoman', 'sportsman', 'sportswoman', 'chairman', 
+                                   'chairwoman', 'committeeman', 'committeewoman', 'congressman', 'congresswoman', 
+                                   'frontman', 'frontwoman']
+        for inconsistant_num_token in inconsistant_num_tokens:
+            if inconsistant_num_token in example['masked_text']:
+                return False
+            
+        return True
     
 
     def _extract_pred_words_probs(self, predictions, pos4preds, tokenizer):
@@ -166,6 +183,9 @@ class dataset2CMs:
         # seperate examples that has the given number of cue words
         sel_dataset = dataset.filter(lambda example: len(example['cue_words'])==self.num_cues)
 
+        # make the dataset size equals to the size of the dataset with 6 cues -> making the dataset balanced
+        sel_dataset = sel_dataset.select(range(sel_dataset[0]['balance_size']))
+
         # each model has it's own mask token
         sel_dataset = sel_dataset.map(self._suitable_mask, batched=False)
 
@@ -175,11 +195,18 @@ class dataset2CMs:
         # ensure that each example is shorter than the model max input length
         sel_dataset = sel_dataset.filter(self._check_input_length_wrapped(model), batched=False)
 
+        all_cues_tokenIdxes = []
+        for i in tqdm(range(len(sel_dataset)), desc="Extracting cue words tokens indices"):
+            cues_tokenIdxes = self._get_token_idxes_for_cues(tokenizer, sel_dataset[i])
+            all_cues_tokenIdxes.append(cues_tokenIdxes)
+
+        sel_dataset = sel_dataset.add_column("cues_tokenIdxes", all_cues_tokenIdxes)
+
+        # added to make the comparison between cm and vp results fair
+        sel_dataset = sel_dataset.filter(self._excludeForCorrupt, batched=False)
+
         # add index of the each example in the dataset 
         sel_dataset = sel_dataset.add_column("idx", [i for i in range(len(sel_dataset))])
-
-        dataset_size = len(sel_dataset)
-        steps = int(np.ceil(dataset_size / BATCH_SIZE))
 
         # we will output this final_data as a pandas dataframe
         final_data = {
@@ -189,32 +216,24 @@ class dataset2CMs:
         }
 
         lengths = []
-        all_cues_tokenIdxes = []
+        for i in tqdm(range(len(sel_dataset)), desc="Initializing final data"):
 
-        for i in tqdm(range(dataset_size), desc="Initializing final data and extracting cue words tokens indices"):
-
-            masked_text = sel_dataset[i]['masked_text']
-            target_word = sel_dataset[i]['target_word']
-            cue_words = sel_dataset[i]['cue_words']
-
-            final_data["masked_text"].append(masked_text)
-            final_data["target_word"].append(target_word)
-            final_data["cue_words"].append(cue_words)
-
+            final_data["masked_text"].append(sel_dataset[i]['masked_text'])
+            final_data["target_word"].append(sel_dataset[i]['target_word'])
+            final_data["cue_words"].append(sel_dataset[i]['cue_words'])
 
             length = len(sel_dataset[i]['input_ids'])
-            cues_tokenIdxes = self._get_token_idxes_for_cues(tokenizer, sel_dataset[i])
-
             lengths.append(length)
-            all_cues_tokenIdxes.append(cues_tokenIdxes)
 
 
         collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
         sel_dataset = sel_dataset.add_column("length", lengths)
-        sel_dataset = sel_dataset.add_column("cues_tokenIdxes", all_cues_tokenIdxes)
+
+        dataset_size = len(sel_dataset)
+        steps = int(np.ceil(dataset_size / BATCH_SIZE))
+
         cols = ["input_ids", "attention_mask", "idx", "length", "cues_tokenIdxes"]
-        # cols = cols + ["token_type_ids"] if not "roberta" in self.model_checkpoint else cols
         sel_dataset.set_format(type="torch", columns=cols)
 
 
