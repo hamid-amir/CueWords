@@ -318,6 +318,7 @@ class GPT2Attention(nn.Module):
             # Start modifying by Hamidreza
             if patch_value_vector is not None:
                 value[:, patch_value_position[0]:patch_value_position[1], :] = patch_value_vector[:, patch_value_position[0]:patch_value_position[1], :]
+            value_vectors = value  # shape: (B,T,d)
             # Finish modifying by Hamidreza
 
         query = self._split_heads(query, self.num_heads, self.head_dim)
@@ -349,7 +350,7 @@ class GPT2Attention(nn.Module):
 
         # Start adding by Hamidreza
         if output_value_vectors:
-            outputs = outputs + (value,)
+            outputs = outputs + (value_vectors,)
         # Finish adding by Hamidreza
 
         return outputs  # a, present, (attentions)
