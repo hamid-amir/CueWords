@@ -3,6 +3,7 @@
 from modeling_roberta_forVP import RobertaForMaskedLM
 from modeling_bert_forVP import BertForMaskedLM
 from modeling_gpt2_forVP import GPT2LMHeadModel
+from modeling_gemma_forVP import GemmaForCausalLM
 from transformers import AutoTokenizer
 import torch
 from tqdm import tqdm
@@ -82,6 +83,30 @@ class dataset2VPs:
             cues_tokenIdxes.append([word_token_positions[0], word_token_positions[-1]+1])
 
         return  cues_tokenIdxes
+    
+
+    def _make_ablation(self, example):
+        replace = 'he' if example['gender'] == 'male' else 'she'
+        tokens = example['masked_text'].split()
+        replace_tokens = [replace] + tokens[2:]
+        example['masked_text'] = ' '.join(replace_tokens)
+
+        replace_cue = 'he|0|2' if example['gender'] == 'male' else 'she|0|3'
+        replace_cue_size = 2 if example['gender'] == 'male' else 3
+
+        _, _, lastName_cue_end = example['cue_words'][1].split('|')
+        example['cue_words'] = [replace_cue] + example['cue_words'][2:]
+
+        for i, cue_word in enumerate(example['cue_words']):
+            if i > 0:
+                cue, cue_start, cue_end = cue_word.split('|')
+                cue_start, cue_end = int(cue_start), int(cue_end)
+                cue_start -= (int(lastName_cue_end) - replace_cue_size)
+                cue_end -= (int(lastName_cue_end) - replace_cue_size)
+                example['cue_words'][i] = cue + '|' + str(cue_start) + '|' + str(cue_end)
+
+        example['cues_pattern'] = 'P' + example['cues_pattern'][2:]
+        return example
     
 
     def _suitable_mask(self, example):
@@ -241,7 +266,7 @@ class dataset2VPs:
 
 
 
-    def retrieveVP(self) -> pd.DataFrame:
+    def retrieveVP(self, ablation_study: bool = False) -> pd.DataFrame:
         """
         Main function that retrievs activation patching results for the cue words.
         """
@@ -249,15 +274,14 @@ class dataset2VPs:
         BATCH_SIZE = 1
 
         # set up the model
-        if "roberta" in self.model_checkpoint:
-            # first load the model with masked lm head and then save it's head
-            model = RobertaForMaskedLM.from_pretrained(self.model_checkpoint)
-        elif "bert" in self.model_checkpoint:
+        if "bert" in self.model_checkpoint:
             model = BertForMaskedLM.from_pretrained(self.model_checkpoint)
         elif "gpt2" in self.model_checkpoint:
             model = GPT2LMHeadModel.from_pretrained(self.model_checkpoint)
-        # elif "gemma" in self.model_checkpoint:
-        #     model = GemmaForCausalLM.from_pretrained(self.model_checkpoint, attn_implementation='eager')
+        elif "gemma" in self.model_checkpoint:
+            model = GemmaForCausalLM.from_pretrained(self.model_checkpoint, attn_implementation='eager')
+        elif "roberta" in self.model_checkpoint:
+            model = RobertaForMaskedLM.from_pretrained(self.model_checkpoint)
         else:
             print(self.model_checkpoint + ' not implemented!')
 
@@ -271,6 +295,18 @@ class dataset2VPs:
 
         # make the dataset size equals to the size of the dataset with 6 cues -> making the dataset balanced
         sel_dataset = sel_dataset.select(range(sel_dataset[0]['balance_size']))
+
+        # replace name to he/she if we are doing the ablation study
+        if ablation_study:
+            all_cues_tokenIdxes = []
+            for i in tqdm(range(len(sel_dataset)), desc="Extracting cue words tokens indices"):
+                cues_tokenIdxes = self._get_token_idxes_for_cues(sel_dataset[i])
+                all_cues_tokenIdxes.append(cues_tokenIdxes)
+            sel_dataset = sel_dataset.add_column("cues_tokenIdxes", all_cues_tokenIdxes)
+
+            # added to make the comparison between cm and vp results fair
+            sel_dataset = sel_dataset.filter(self._excludeForCorrupt, batched=False)
+            sel_dataset = sel_dataset.map(self._make_ablation, batched=False)
 
         # each model has it's own mask token
         sel_dataset = sel_dataset.map(self._suitable_mask, batched=False)
@@ -286,6 +322,8 @@ class dataset2VPs:
             cues_tokenIdxes = self._get_token_idxes_for_cues(sel_dataset[i])
             all_cues_tokenIdxes.append(cues_tokenIdxes)
 
+        if 'cues_tokenIdxes' in sel_dataset.column_names:
+            sel_dataset = sel_dataset.remove_columns(['cues_tokenIdxes'])
         sel_dataset = sel_dataset.add_column("cues_tokenIdxes", all_cues_tokenIdxes)
 
         # some exclusisons before adding a corrupted text
@@ -393,7 +431,7 @@ class dataset2VPs:
 
                 idxes.extend(batch['idx'].tolist())
                 target_token = sel_dataset[batch['idx'].tolist()[0]]['target_word']
-                target_tokens_pool = [target_token, ' ' + target_token, target_token.capitalize(), ' ' + target_token.capitalize()]
+                target_tokens_pool = [target_token, target_token.capitalize(), ' ' + target_token, ' ' + target_token.capitalize()]
                 target_tokens_pool = target_tokens_pool[2:] if target_token in ['him', 'himself', 'hers', 'herself'] else target_tokens_pool
                 target_token_ids_pool = [self.tokenizer.encode(token, add_special_tokens=False)[0] for token in target_tokens_pool]
 

@@ -64,6 +64,30 @@ class dataset2CMs:
         return  cues_tokenIdxes
     
 
+    def _make_ablation(self, example):
+        replace = 'he' if example['gender'] == 'male' else 'she'
+        tokens = example['masked_text'].split()
+        replace_tokens = [replace] + tokens[2:]
+        example['masked_text'] = ' '.join(replace_tokens)
+
+        replace_cue = 'he|0|2' if example['gender'] == 'male' else 'she|0|3'
+        replace_cue_size = 2 if example['gender'] == 'male' else 3
+
+        _, _, lastName_cue_end = example['cue_words'][1].split('|')
+        example['cue_words'] = [replace_cue] + example['cue_words'][2:]
+
+        for i, cue_word in enumerate(example['cue_words']):
+            if i > 0:
+                cue, cue_start, cue_end = cue_word.split('|')
+                cue_start, cue_end = int(cue_start), int(cue_end)
+                cue_start -= (int(lastName_cue_end) - replace_cue_size)
+                cue_end -= (int(lastName_cue_end) - replace_cue_size)
+                example['cue_words'][i] = cue + '|' + str(cue_start) + '|' + str(cue_end)
+
+        example['cues_pattern'] = 'P' + example['cues_pattern'][2:]
+        return example
+
+
     def _suitable_mask(self, example):
         # the format is alread suitable for BERT since we used [MASK] token when constructing our dataset
         if 'roberta' in self.model_checkpoint:
@@ -136,7 +160,7 @@ class dataset2CMs:
 
 
 
-    def retrieveCM(self) -> pd.DataFrame:
+    def retrieveCM(self, ablation_study: bool = False) -> pd.DataFrame:
         """
         Main function that retrievs context mixing scores of cue words based on
         various interpretability methods.
@@ -186,6 +210,18 @@ class dataset2CMs:
         # make the dataset size equals to the size of the dataset with 6 cues -> making the dataset balanced
         sel_dataset = sel_dataset.select(range(sel_dataset[0]['balance_size']))
 
+        # replace name to he/she if we are doing the ablation study
+        if ablation_study:
+            all_cues_tokenIdxes = []
+            for i in tqdm(range(len(sel_dataset)), desc="Extracting cue words tokens indices"):
+                cues_tokenIdxes = self._get_token_idxes_for_cues(tokenizer, sel_dataset[i])
+                all_cues_tokenIdxes.append(cues_tokenIdxes)
+            sel_dataset = sel_dataset.add_column("cues_tokenIdxes", all_cues_tokenIdxes)
+
+            # added to make the comparison between cm and vp results fair
+            sel_dataset = sel_dataset.filter(self._excludeForCorrupt, batched=False)
+            sel_dataset = sel_dataset.map(self._make_ablation, batched=False)
+
         # each model has it's own mask token
         sel_dataset = sel_dataset.map(self._suitable_mask, batched=False)
 
@@ -200,6 +236,8 @@ class dataset2CMs:
             cues_tokenIdxes = self._get_token_idxes_for_cues(tokenizer, sel_dataset[i])
             all_cues_tokenIdxes.append(cues_tokenIdxes)
 
+        if 'cues_tokenIdxes' in sel_dataset.column_names:
+            sel_dataset = sel_dataset.remove_columns(['cues_tokenIdxes'])
         sel_dataset = sel_dataset.add_column("cues_tokenIdxes", all_cues_tokenIdxes)
 
         # added to make the comparison between cm and vp results fair
