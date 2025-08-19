@@ -19,10 +19,6 @@ CueWords/
 ├── context_mixing/         # Context mixing analysis tools
 ├── value_patching/         # Value patching implementation
 ├── data/                   # Generated datasets
-├── results_vp/             # Value patching results
-├── results_cm/             # Context mixing results
-├── notebooks/              # Jupyter notebooks for analysis
-└── figs/                   # Generated figures and visualizations
 ```
 
 ## Key Features
@@ -101,13 +97,7 @@ If you use this code in your research, please cite the following paper and ackno
   author    = "Amirzadeh, Hamidreza and
                Alishahi, Afra and
                Mohebbi, Hosein",
-  editor    = "Belinkov, Yonatan and
-               Kim, Najoung and
-               Jumelet, Jaap and
-               Mohebbi, Hosein and
-               Mueller, Aaron and
-               Chen, Hanjie",
-  booktitle = "Proceedings of the 7th BlackboxNLP Workshop: Analyzing and Interpreting Neural Networks for NLP",
+  booktitle = "Proceedings of the 7th BlackboxNLP Workshop at EMNLP 2024: Analyzing and Interpreting Neural Networks for NLP",
   month     = nov,
   year      = "2024",
   address   = "Miami, Florida, US",
